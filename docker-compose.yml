@@ -1,24 +1,29 @@
-version: '3.8'
-
 services:
-  # 1. 你的私有图床服务
   nano-imgbed:
     build: .
-    container_name: nano-imgbed
+    container_name: pixnest
     restart: always
     volumes:
-      - ./uploads:/app/uploads
+      - ./app/uploads:/app/uploads
     environment:
-      # 👇 在这里设置你真正的超强密码！
-      - AUTH_TOKEN=Ouch_Top_Secret_2026!
-    # 注意：这里我们故意删掉了 ports 映射，拒绝物理机的直接访问，安全性拉满！
+      AUTH_TOKEN: ${AUTH_TOKEN:?Set AUTH_TOKEN in .env}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-10}
+      CLEANUP_INTERVAL_SEC: ${CLEANUP_INTERVAL_SEC:-600}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
-  # 2. Cloudflare 隧道服务
   cloudflared:
     image: cloudflare/cloudflared:latest
-    container_name: cloudflared-imgbed
+    container_name: cloudflared-pixnest
     restart: always
     command: tunnel run
     environment:
-      # 👇 把这里换成你去 Cloudflare 后台获取的真实 Token
-      - TUNNEL_TOKEN=eyJhIjoi...你的完整Token...
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?Set TUNNEL_TOKEN in .env}
+    depends_on:
+      nano-imgbed:
+        condition: service_healthy
