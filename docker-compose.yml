@@ -1,5 +1,6 @@
 services:
   nano-imgbed:
+    image: ghcr.io/robinproxy/pixnest:latest
     build: .
     container_name: pixnest
     restart: always
