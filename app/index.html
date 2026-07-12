@@ -309,25 +309,14 @@
         return ` · <span class="g-expire">过期 ${d.toLocaleDateString()}</span>`;
     }
 
-    async function loadGallery() {
-        const pg = $('panelGallery');
-        pg.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 40px;">加载中...</div>';
-        try {
-            const res = await fetch('/api/history', { headers: { 'X-Auth-Token': getToken() } });
-            if (res.status === 401) return logout();
-            const data = await res.json();
+    let galleryPage = 1;
+    const GALLERY_SIZE = 30;
 
-            if (!data.images.length) {
-                pg.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 40px;">图库空空如也</div>';
-                return;
-            }
-
-            pg.innerHTML = data.images.map(img => {
-                const dateStr = new Date(img.time * 1000).toLocaleDateString();
-                const uid = 'gal-' + img.filename.replace(/[^a-zA-Z0-9_-]/g, '');
-                const safeName = img.filename.replace(/'/g, "\\'");
-
-                return `
+    function galleryCardHtml(img) {
+        const dateStr = new Date(img.time * 1000).toLocaleDateString();
+        const uid = 'gal-' + img.filename.replace(/[^a-zA-Z0-9_-]/g, '');
+        const safeName = img.filename.replace(/'/g, "\\'");
+        return `
                 <div class="g-card" id="card-${img.filename}">
                     <div class="g-img-box">
                         <img src="${img.url}" loading="lazy">
@@ -346,9 +335,52 @@
                             <button class="fmt-btn" style="padding: 6px; flex: 1; justify-content: center;" onclick="updateFormat('${uid}', this, '[img]${img.url}[/img]', 'code')">BB</button>
                         </div>
                     </div>
-                </div>
-            `}).join('');
-        } catch (e) { pg.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: red;">加载失败</div>'; }
+                </div>`;
+    }
+
+    function renderGalleryPage(data, replace) {
+        const pg = $('panelGallery');
+        const oldMore = document.getElementById('loadMoreBtn');
+        if (oldMore) oldMore.remove();
+        if (replace) pg.innerHTML = '';
+        if (replace && !data.images.length) {
+            pg.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 40px;">图库空空如也</div>';
+            return;
+        }
+        pg.insertAdjacentHTML('beforeend', data.images.map(galleryCardHtml).join(''));
+        if (galleryPage * GALLERY_SIZE < data.total) {
+            const btn = document.createElement('div');
+            btn.id = 'loadMoreBtn';
+            btn.style.cssText = 'grid-column: 1/-1; text-align: center; padding: 20px;';
+            btn.innerHTML = '<button class="fmt-btn" style="padding: 12px 32px;" onclick="loadMoreGallery()">加载更多</button>';
+            pg.appendChild(btn);
+        }
+    }
+
+    async function loadGallery() {
+        galleryPage = 1;
+        const pg = $('panelGallery');
+        pg.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 40px;">加载中...</div>';
+        try {
+            const res = await fetch(`/api/history?page=1&size=${GALLERY_SIZE}`, { headers: { 'X-Auth-Token': getToken() } });
+            if (res.status === 401) return logout();
+            const data = await res.json();
+            renderGalleryPage(data, true);
+        } catch (e) {
+            pg.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: red;">加载失败</div>';
+        }
+    }
+
+    async function loadMoreGallery() {
+        galleryPage++;
+        try {
+            const res = await fetch(`/api/history?page=${galleryPage}&size=${GALLERY_SIZE}`, { headers: { 'X-Auth-Token': getToken() } });
+            if (res.status === 401) return logout();
+            const data = await res.json();
+            renderGalleryPage(data, false);
+        } catch (e) {
+            galleryPage--;
+        }
     }
 
     async function del(filename) {

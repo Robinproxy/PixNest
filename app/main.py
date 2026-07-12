@@ -212,28 +212,46 @@ async def upload_image(
 
 
 @app.get("/api/history")
-async def get_history(request: Request, _: str = Depends(require_auth)):
+async def get_history(
+    request: Request,
+    page: int = 1,
+    size: int = 30,
+    _: str = Depends(require_auth),
+):
+    if page < 1:
+        page = 1
+    if size < 1 or size > 100:
+        size = 30
     meta = load_meta()
-    files_list = []
     base_url = public_base(request)
-    for filename in os.listdir(UPLOAD_DIR):
-        if filename == "meta.json" or filename.endswith(".tmp") or filename == ".gitkeep":
-            continue
+    all_files = [
+        f for f in os.listdir(UPLOAD_DIR)
+        if f != "meta.json" and not f.endswith(".tmp") and f != ".gitkeep"
+    ]
+    all_files.sort(reverse=True)
+    total = len(all_files)
+    start = (page - 1) * size
+    page_files = all_files[start:start + size]
+    images = []
+    for filename in page_files:
         file_path = os.path.join(UPLOAD_DIR, filename)
-        if not os.path.isfile(file_path):
-            continue
         stat = os.stat(file_path)
-        expire_at = get_expire_ts(meta.get(filename))
         item = {
             "filename": filename,
             "url": f"{base_url}i/{filename}",
             "time": stat.st_mtime,
         }
+        expire_at = get_expire_ts(meta.get(filename))
         if expire_at is not None:
             item["expire_at"] = expire_at
-        files_list.append(item)
-    files_list.sort(key=lambda x: x["time"], reverse=True)
-    return {"success": True, "images": files_list}
+        images.append(item)
+    return {
+        "success": True,
+        "images": images,
+        "page": page,
+        "size": size,
+        "total": total,
+    }
 
 
 @app.delete("/api/delete/{filename}")
