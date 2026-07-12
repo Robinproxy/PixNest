@@ -28,6 +28,8 @@ cd app && uvicorn main:app --host 0.0.0.0 --port 8000
 ```bash
 cp .env.example .env
 # 编辑 .env：设置 AUTH_TOKEN、TUNNEL_TOKEN，可选 PUBLIC_BASE_URL
+# 容器以 uid 1000 的非 root 用户运行，需让宿主 uploads 目录归该 uid 所有：
+sudo chown -R 1000:1000 app/uploads
 docker compose up -d --build
 ```
 
