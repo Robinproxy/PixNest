@@ -3,6 +3,7 @@ import re
 import time
 import json
 import uuid
+import secrets
 import asyncio
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -102,7 +103,7 @@ app.mount("/i", StaticFiles(directory=UPLOAD_DIR), name="images")
 
 
 def require_auth(x_auth_token: Optional[str] = Header(None)) -> str:
-    if not x_auth_token or x_auth_token != AUTH_TOKEN:
+    if not x_auth_token or not secrets.compare_digest(x_auth_token, AUTH_TOKEN):
         raise HTTPException(status_code=401, detail="Unauthorized")
     return x_auth_token
 
