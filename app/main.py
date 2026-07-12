@@ -99,7 +99,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="PixNest", lifespan=lifespan)
-app.mount("/i", StaticFiles(directory=UPLOAD_DIR), name="images")
+
+
+class CachedStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
+app.mount("/i", CachedStaticFiles(directory=UPLOAD_DIR), name="images")
 
 
 def require_auth(x_auth_token: Optional[str] = Header(None)) -> str:
