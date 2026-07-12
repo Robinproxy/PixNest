@@ -128,7 +128,7 @@
         <div class="upload-zone" id="dropZone">
             <svg class="icon-svg" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
             <div style="font-size: 18px; font-weight: 600; color: #1d1d1f; margin-bottom: 8px;">点击、拖拽 或 Ctrl+V 粘贴图片至此</div>
-            <div style="color: var(--text-muted); font-size: 13px;">浏览器端 WebP 压缩 · 可选过期自动清理</div>
+            <div style="color: var(--text-muted); font-size: 13px;">浏览器端 WebP 压缩 · 自动剥离 EXIF · 可选过期自动清理</div>
         </div>
         <input type="file" id="fileInput" style="display: none;" accept="image/*">
 
@@ -242,8 +242,12 @@
 
         try {
             let finalFile = file;
-            if (file.type !== 'image/gif' && ($('cWebp').checked || $('cWm').checked)) {
-                finalFile = await processImg(file, $('cWebp').checked, parseInt($('cQual').value) / 100, $('cWm').checked ? $('vWm').value : '');
+            if (file.type !== 'image/gif') {
+                try {
+                    finalFile = await processImg(file, $('cWebp').checked, parseInt($('cQual').value) / 100, $('cWm').checked ? $('vWm').value : '');
+                } catch (e) {
+                    finalFile = file;
+                }
             }
 
             const fd = new FormData();
@@ -390,11 +394,12 @@
                     const ext = toWebp ? 'webp' : ((file.name || '').split('.').pop() || 'png');
                     const outName = `${base}.${ext}`;
 
+                    const effQ = toWebp ? q : 0.95;
                     canvas.toBlob(blob => {
                         URL.revokeObjectURL(objUrl);
                         if (!blob) return reject(new Error('encode failed'));
                         resolve(new File([blob], outName, { type: mime }));
-                    }, mime, q);
+                    }, mime, effQ);
                 } catch (err) {
                     URL.revokeObjectURL(objUrl);
                     reject(err);
