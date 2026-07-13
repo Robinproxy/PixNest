@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import hashlib
 import json
 import logging
 import os
@@ -14,8 +16,10 @@ from fastapi.staticfiles import StaticFiles
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads"))
-META_FILE = os.path.join(UPLOAD_DIR, "meta.json")
+META_DIR = os.getenv("META_DIR", os.path.join(BASE_DIR, "data"))
+META_FILE = os.path.join(META_DIR, "meta.json")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(META_DIR, exist_ok=True)
 
 logger = logging.getLogger("pixnest")
 
@@ -45,6 +49,10 @@ RATE_LIMIT_WINDOW = 60
 RATE_LIMIT_MAX = 5
 _login_attempts: dict[str, list[float]] = {}
 
+UPLOAD_RATE_LIMIT_WINDOW = 60
+UPLOAD_RATE_LIMIT_MAX = 30
+_upload_attempts: dict[str, list[float]] = {}
+
 
 def _get_client_ip(request: Request) -> str:
     cf_ip = request.headers.get("CF-Connecting-IP")
@@ -68,6 +76,16 @@ def _check_rate_limit(ip: str) -> None:
         )
     recent.append(now)
     _login_attempts[ip] = recent
+
+
+def _check_upload_rate_limit(ip: str) -> None:
+    now = time.time()
+    attempts = _upload_attempts.get(ip, [])
+    recent = [t for t in attempts if now - t < UPLOAD_RATE_LIMIT_WINDOW]
+    if len(recent) >= UPLOAD_RATE_LIMIT_MAX:
+        raise HTTPException(status_code=429, detail="Too many uploads, try again later")
+    recent.append(now)
+    _upload_attempts[ip] = recent
 
 ALLOWED_EXT = {"jpg", "jpeg", "png", "gif", "webp", "bmp"}
 FILENAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -157,6 +175,12 @@ async def cleanup_loop():
                     _login_attempts[ip] = recent
                 else:
                     del _login_attempts[ip]
+            for ip in list(_upload_attempts):
+                recent = [t for t in _upload_attempts[ip] if now - t < UPLOAD_RATE_LIMIT_WINDOW]
+                if recent:
+                    _upload_attempts[ip] = recent
+                else:
+                    del _upload_attempts[ip]
         except Exception:
             logger.exception("cleanup loop error")
         await asyncio.sleep(CLEANUP_INTERVAL_SEC)
@@ -182,9 +206,31 @@ if os.path.exists(_index_path):
     with open(_index_path, encoding="utf-8") as f:
         _INDEX_HTML = f.read()
 
+_CSP_HASHES: dict[str, str] = {}
+if _INDEX_HTML:
+    for tag in ("script", "style"):
+        m = re.search(rf"<{tag}\b[^>]*>(.*?)</{tag}>", _INDEX_HTML, re.DOTALL)
+        if m:
+            h = base64.b64encode(hashlib.sha256(m.group(1).encode("utf-8")).digest()).decode("ascii")
+            _CSP_HASHES[tag] = f"'sha256-{h}'"
+
+_CSP_POLICY = (
+    "default-src 'self'; "
+    f"script-src 'self' {_CSP_HASHES.get('script', '')}; "
+    f"style-src 'self' {_CSP_HASHES.get('style', '')}; "
+    "img-src 'self' data: blob:; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'; "
+    "form-action 'none'; "
+    "base-uri 'none'; "
+    "object-src 'none'"
+)
+
 
 class CachedStaticFiles(StaticFiles):
     async def get_response(self, path, scope):
+        if path in ("meta.json",) or path.endswith(".tmp"):
+            raise HTTPException(status_code=404)
         response = await super().get_response(path, scope)
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return response
@@ -193,8 +239,21 @@ class CachedStaticFiles(StaticFiles):
 app.mount("/i", CachedStaticFiles(directory=UPLOAD_DIR), name="images")
 
 
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    if PUBLIC_BASE_URL.startswith("https://") or request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Content-Security-Policy"] = _CSP_POLICY
+    return response
+
+
 def require_auth(x_auth_token: str | None = Header(None)) -> str:
     if not AUTH_TOKEN or not x_auth_token or not secrets.compare_digest(x_auth_token, AUTH_TOKEN):
+        logger.warning("Authentication failed: invalid or missing token")
         raise HTTPException(status_code=401, detail="Unauthorized")
     return x_auth_token
 
@@ -251,6 +310,7 @@ async def verify_token(request: Request):
     _check_rate_limit(ip)
     token = request.headers.get("X-Auth-Token")
     if not token or not secrets.compare_digest(token, AUTH_TOKEN):
+        logger.warning("Verify failed: invalid token from %s", ip)
         raise HTTPException(status_code=401, detail="Unauthorized")
     return {"success": True}
 
@@ -262,6 +322,14 @@ async def upload_image(
     expire_days: int = Form(0),
     _: str = Depends(require_auth),
 ):
+    ip = _get_client_ip(request)
+    _check_upload_rate_limit(ip)
+
+    if expire_days < 0:
+        expire_days = 0
+    elif expire_days > 365:
+        expire_days = 365
+
     if file.content_type and not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Only image uploads are allowed")
 

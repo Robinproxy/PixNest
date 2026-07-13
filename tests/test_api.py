@@ -16,12 +16,16 @@ def _png_bytes(size: int = 200) -> bytes:
 def setup(monkeypatch, tmp_path):
     upload_dir = tmp_path / "uploads"
     upload_dir.mkdir()
+    meta_dir = tmp_path / "data"
+    meta_dir.mkdir()
     monkeypatch.setattr("app.main.UPLOAD_DIR", str(upload_dir))
-    monkeypatch.setattr("app.main.META_FILE", str(upload_dir / "meta.json"))
+    monkeypatch.setattr("app.main.META_DIR", str(meta_dir))
+    monkeypatch.setattr("app.main.META_FILE", str(meta_dir / "meta.json"))
     monkeypatch.setattr("app.main.AUTH_TOKEN", TEST_TOKEN)
     monkeypatch.setattr("app.main.MAX_UPLOAD_BYTES", 1024 * 1024)
-    from app.main import _login_attempts
+    from app.main import _login_attempts, _upload_attempts
     _login_attempts.clear()
+    _upload_attempts.clear()
 
 
 @pytest.fixture
@@ -187,7 +191,7 @@ class TestCleanup:
         )
         assert up.status_code == 200
         filename = up.json()["filename"]
-        meta_file = tmp_path / "uploads" / "meta.json"
+        meta_file = tmp_path / "data" / "meta.json"
         meta = json.loads(meta_file.read_text())
         meta[filename]["expire"] = time.time() - 3600
         meta_file.write_text(json.dumps(meta))
@@ -198,3 +202,58 @@ class TestCleanup:
         assert removed == 1
         res = client.get("/api/history", headers=auth())
         assert not any(f["filename"] == filename for f in res.json()["images"])
+
+
+class TestSecurity:
+    def test_security_headers(self, client):
+        res = client.get("/")
+        assert res.headers.get("x-frame-options") == "DENY"
+        assert res.headers.get("x-content-type-options") == "nosniff"
+        assert "content-security-policy" in res.headers
+        csp = res.headers["content-security-policy"]
+        assert "frame-ancestors 'none'" in csp
+        assert "default-src 'self'" in csp
+
+    def test_csp_hashes_present(self, client):
+        res = client.get("/")
+        csp = res.headers["content-security-policy"]
+        assert "sha256-" in csp
+
+    def test_meta_json_not_served(self, client):
+        res = client.get("/i/meta.json")
+        assert res.status_code == 404
+
+    def test_expire_days_negative(self, client):
+        res = client.post(
+            "/upload",
+            files={"file": ("test.png", _png_bytes(), "image/png")},
+            data={"expire_days": "-1"},
+            headers=auth(),
+        )
+        assert res.status_code == 200
+
+    def test_expire_days_too_large(self, client):
+        res = client.post(
+            "/upload",
+            files={"file": ("test.png", _png_bytes(), "image/png")},
+            data={"expire_days": "9999"},
+            headers=auth(),
+        )
+        assert res.status_code == 200
+
+    def test_upload_rate_limit(self, client):
+        for _ in range(35):
+            res = client.post(
+                "/upload",
+                files={"file": ("test.png", _png_bytes(50), "image/png")},
+                headers=auth(),
+            )
+            assert res.status_code in (200, 429)
+        assert any(
+            client.post(
+                "/upload",
+                files={"file": ("test.png", _png_bytes(50), "image/png")},
+                headers=auth(),
+            ).status_code == 429
+            for _ in range(3)
+        )
