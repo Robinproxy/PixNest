@@ -1,13 +1,12 @@
+import asyncio
+import json
+import logging
 import os
 import re
-import time
-import json
-import uuid
 import secrets
-import asyncio
-import logging
+import time
+import uuid
 from contextlib import asynccontextmanager
-from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -99,7 +98,7 @@ def load_meta() -> dict:
     if not os.path.exists(META_FILE):
         return {}
     try:
-        with open(META_FILE, "r", encoding="utf-8") as f:
+        with open(META_FILE, encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except (json.JSONDecodeError, OSError):
@@ -113,7 +112,7 @@ def save_meta(data: dict) -> None:
     os.replace(tmp, META_FILE)
 
 
-def get_expire_ts(entry) -> Optional[float]:
+def get_expire_ts(entry) -> float | None:
     if isinstance(entry, (int, float)):
         return float(entry)
     if isinstance(entry, dict) and "expire" in entry:
@@ -177,6 +176,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="PixNest", lifespan=lifespan)
 
+_INDEX_HTML: str = ""
+_index_path = os.path.join(BASE_DIR, "index.html")
+if os.path.exists(_index_path):
+    with open(_index_path, encoding="utf-8") as f:
+        _INDEX_HTML = f.read()
+
 
 class CachedStaticFiles(StaticFiles):
     async def get_response(self, path, scope):
@@ -188,7 +193,7 @@ class CachedStaticFiles(StaticFiles):
 app.mount("/i", CachedStaticFiles(directory=UPLOAD_DIR), name="images")
 
 
-def require_auth(x_auth_token: Optional[str] = Header(None)) -> str:
+def require_auth(x_auth_token: str | None = Header(None)) -> str:
     if not x_auth_token or not secrets.compare_digest(x_auth_token, AUTH_TOKEN):
         raise HTTPException(status_code=401, detail="Unauthorized")
     return x_auth_token
@@ -211,7 +216,7 @@ def safe_filename(name: str) -> str:
     return base
 
 
-def normalize_ext(filename: Optional[str], content_type: Optional[str]) -> str:
+def normalize_ext(filename: str | None, content_type: str | None) -> str:
     ext = ""
     if filename and "." in filename:
         ext = filename.rsplit(".", 1)[-1].lower()
@@ -237,8 +242,7 @@ async def health():
 
 @app.get("/", response_class=HTMLResponse)
 async def read_index():
-    with open(os.path.join(BASE_DIR, "index.html"), "r", encoding="utf-8") as f:
-        return f.read()
+    return _INDEX_HTML
 
 
 @app.get("/verify")

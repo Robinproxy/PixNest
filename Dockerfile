@@ -1,8 +1,10 @@
-FROM python:3.11-alpine
+FROM python:3.11-slim
 WORKDIR /app
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-RUN adduser -D -u 1000 appuser
+RUN useradd -m -u 1000 appuser
 COPY --chown=appuser:appuser ./app /app
 USER appuser
 EXPOSE 8000
