@@ -17,7 +17,61 @@
 | **分发** | 直链 / HTML / Markdown / BBCode 一键复制，图库浏览，灯箱导航 |
 | **存储** | 可选自动过期（1 天/7 天），定时清理，本地磁盘持久化 |
 
-## 快速开始
+## Docker Compose 部署
+
+项目根目录附带 `docker-compose.yml`，包含 PixNest 应用和 Cloudflare Tunnel（可选）两个服务。
+
+### 前置准备
+
+```bash
+cp .env.example .env
+```
+
+编辑 `.env` 文件，填写必要配置：
+
+- `AUTH_TOKEN` — 管理接口密钥，**必填**，设为高强度随机字符串
+- `TUNNEL_TOKEN` — Cloudflare Tunnel 令牌，如需公网暴露则填写
+
+容器以非 root 用户（uid 1000）运行。宿主机挂载目录需归该 uid 所有：
+
+```bash
+sudo chown -R 1000:1000 app/uploads
+```
+
+### 启动
+
+```bash
+docker compose up -d
+```
+
+启动后应用容器仅内部可用，不做宿主机端口映射。如果配置了 `TUNNEL_TOKEN`，`cloudflared` 会自动建立 Tunnel 将服务暴露到公网。
+
+### 健康检查
+
+```bash
+docker compose ps
+```
+
+两个服务均显示 `healthy` 即为正常运行。
+
+### 仅启动应用（不使用 Tunnel）
+
+```bash
+docker compose up -d pixnest
+```
+
+如需本地访问，修改 `docker-compose.yml` 的 `pixnest` 服务添加端口映射：
+
+```yaml
+ports:
+  - "8000:8000"
+```
+
+打开 http://localhost:8000 ，输入 `AUTH_TOKEN` 即可使用。
+
+## Docker 快速体验
+
+不使用 Compose 时，单容器运行：
 
 ```bash
 docker run -d -p 8000:8000 \
@@ -26,11 +80,7 @@ docker run -d -p 8000:8000 \
   ghcr.io/robinproxy/pixnest:latest
 ```
 
-打开 http://localhost:8000 ，输入密钥即可使用。
-
 ## 配置说明
-
-通过环境变量配置：
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
@@ -58,6 +108,7 @@ docker run -d -p 8000:8000 \
 ## 安全
 
 - 写 / 列 / 删接口均需 `X-Auth-Token` 鉴权
+- `AUTH_TOKEN` 未设置时所有管理接口返回 401，拒绝服务
 - 图片直链 `/i/*` 不鉴权（图床通用模型）
 - 登录接口限流：每 IP 60 秒内最多 5 次尝试
 - 上传文件通过 Magic Bytes 校验真实格式，不依赖扩展名
@@ -90,6 +141,8 @@ app/
   uploads/        图片与 meta.json
 tests/
   test_api.py     API 集成测试
+assets/
+  logo.svg        项目图标
 .env.example      环境变量模板
 Dockerfile        容器构建
 docker-compose.yml  生产部署
