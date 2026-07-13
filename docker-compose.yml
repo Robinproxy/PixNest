@@ -12,6 +12,8 @@ services:
     environment:
       AUTH_TOKEN: ${AUTH_TOKEN:?Set AUTH_TOKEN in .env}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-10}
       CLEANUP_INTERVAL_SEC: ${CLEANUP_INTERVAL_SEC:-600}
     healthcheck:

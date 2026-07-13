@@ -28,6 +28,8 @@ AUTH_TOKEN = os.getenv("AUTH_TOKEN")
 if not AUTH_TOKEN:
     logger.warning("AUTH_TOKEN is not set. All authenticated requests will be rejected.")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+ALLOWED_HOSTS = {h.strip() for h in os.getenv("ALLOWED_HOSTS", "").split(",") if h.strip()}
+TRUSTED_PROXIES = {ip.strip() for ip in os.getenv("TRUSTED_PROXIES", "").split(",") if ip.strip()}
 
 
 def _env_int(key: str, default: int) -> int:
@@ -54,15 +56,24 @@ UPLOAD_RATE_LIMIT_WINDOW = 60
 UPLOAD_RATE_LIMIT_MAX = 30
 _upload_attempts: dict[str, list[float]] = {}
 
+API_RATE_LIMIT_WINDOW = 60
+API_RATE_LIMIT_MAX = 60
+_api_attempts: dict[str, list[float]] = {}
+
+_RATE_LIMIT_MAX_ENTRIES = 10000
+
 
 def _get_client_ip(request: Request) -> str:
+    client_ip = request.client.host if request.client else "unknown"
+    if client_ip not in TRUSTED_PROXIES:
+        return client_ip
     cf_ip = request.headers.get("CF-Connecting-IP")
     if cf_ip:
         return cf_ip.strip()
     xff = request.headers.get("X-Forwarded-For")
     if xff:
         return xff.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    return client_ip
 
 
 def _rate_limit(ip: str, attempts: dict, window: int, limit: int, detail: str) -> None:
@@ -72,6 +83,9 @@ def _rate_limit(ip: str, attempts: dict, window: int, limit: int, detail: str) -
         raise HTTPException(status_code=429, detail=detail, headers={"Retry-After": str(window)})
     recent.append(now)
     attempts[ip] = recent
+    if len(attempts) > _RATE_LIMIT_MAX_ENTRIES:
+        for k in [k for k, v in attempts.items() if not any(now - t < window for t in v)]:
+            del attempts[k]
 
 ALLOWED_EXT = {"jpg", "jpeg", "png", "gif", "webp", "bmp"}
 FILENAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -155,7 +169,7 @@ async def cleanup_loop():
         try:
             await cleanup_expired()
             now = time.time()
-            for attempts, window in (_login_attempts, RATE_LIMIT_WINDOW), (_upload_attempts, UPLOAD_RATE_LIMIT_WINDOW):
+            for attempts, window in (_login_attempts, RATE_LIMIT_WINDOW), (_upload_attempts, UPLOAD_RATE_LIMIT_WINDOW), (_api_attempts, API_RATE_LIMIT_WINDOW):
                 for ip in list(attempts):
                     recent = [t for t in attempts[ip] if now - t < window]
                     if recent:
@@ -215,6 +229,10 @@ app.mount("/i", CachedStaticFiles(directory=UPLOAD_DIR), name="images")
 
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
+    if ALLOWED_HOSTS:
+        host = request.headers.get("host", "").split(":")[0]
+        if host not in ALLOWED_HOSTS:
+            return JSONResponse(status_code=400, content={"detail": "Invalid Host header"})
     response = await call_next(request)
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -231,8 +249,12 @@ _MAX_BODY_BYTES = MAX_UPLOAD_BYTES + 1024 * 1024
 @app.middleware("http")
 async def limit_request_body(request: Request, call_next):
     cl = request.headers.get("content-length")
-    if cl and int(cl) > _MAX_BODY_BYTES:
-        return JSONResponse(status_code=413, content={"detail": "Request too large"})
+    if cl:
+        try:
+            if int(cl) > _MAX_BODY_BYTES:
+                return JSONResponse(status_code=413, content={"detail": "Request too large"})
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
     return await call_next(request)
 
 
@@ -294,7 +316,7 @@ async def verify_token(request: Request):
     ip = _get_client_ip(request)
     _rate_limit(ip, _login_attempts, RATE_LIMIT_WINDOW, RATE_LIMIT_MAX, "Too many login attempts, try again later")
     token = request.headers.get("X-Auth-Token")
-    if not token or not secrets.compare_digest(token, AUTH_TOKEN):
+    if not AUTH_TOKEN or not token or not secrets.compare_digest(token, AUTH_TOKEN):
         logger.warning("Verify failed: invalid token from %s", ip)
         raise HTTPException(status_code=401, detail="Unauthorized")
     return {"success": True}
@@ -377,6 +399,8 @@ async def get_history(
     size: int = 30,
     _: str = Depends(require_auth),
 ):
+    ip = _get_client_ip(request)
+    _rate_limit(ip, _api_attempts, API_RATE_LIMIT_WINDOW, API_RATE_LIMIT_MAX, "Too many requests, try again later")
     if page < 1:
         page = 1
     if size < 1 or size > 100:
@@ -430,6 +454,8 @@ async def get_history(
 
 @app.delete("/api/delete/{filename}")
 async def delete_image(request: Request, filename: str, _: str = Depends(require_auth)):
+    ip = _get_client_ip(request)
+    _rate_limit(ip, _api_attempts, API_RATE_LIMIT_WINDOW, API_RATE_LIMIT_MAX, "Too many requests, try again later")
     safe = safe_filename(filename)
     file_path = os.path.join(UPLOAD_DIR, safe)
     if not os.path.isfile(file_path):

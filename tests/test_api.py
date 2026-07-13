@@ -23,9 +23,10 @@ def setup(monkeypatch, tmp_path):
     monkeypatch.setattr("app.main.META_FILE", str(meta_dir / "meta.json"))
     monkeypatch.setattr("app.main.AUTH_TOKEN", TEST_TOKEN)
     monkeypatch.setattr("app.main.MAX_UPLOAD_BYTES", 1024 * 1024)
-    from app.main import _login_attempts, _upload_attempts
+    from app.main import _api_attempts, _login_attempts, _upload_attempts
     _login_attempts.clear()
     _upload_attempts.clear()
+    _api_attempts.clear()
 
 
 @pytest.fixture
@@ -275,3 +276,49 @@ class TestSecurity:
         res = client.get("/")
         csp = res.headers["content-security-policy"]
         assert "upgrade-insecure-requests" in csp
+
+    def test_verify_when_auth_token_unset(self, client, monkeypatch):
+        monkeypatch.setattr("app.main.AUTH_TOKEN", None)
+        res = client.get("/verify", headers={"X-Auth-Token": "anything"})
+        assert res.status_code == 401
+
+    def test_allowed_hosts_reject(self, client, monkeypatch):
+        monkeypatch.setattr("app.main.ALLOWED_HOSTS", {"example.com"})
+        res = client.get("/health", headers={"Host": "evil.com"})
+        assert res.status_code == 400
+
+    def test_allowed_hosts_accept(self, client, monkeypatch):
+        monkeypatch.setattr("app.main.ALLOWED_HOSTS", {"testserver"})
+        res = client.get("/health")
+        assert res.status_code == 200
+
+    def test_ip_spoofing_blocked_without_trusted_proxies(self, client):
+        for i in range(5):
+            res = client.get("/verify", headers={"X-Auth-Token": "wrong", "X-Forwarded-For": f"10.0.0.{i}"})
+            assert res.status_code == 401
+        res = client.get("/verify", headers=auth())
+        assert res.status_code == 429
+
+    def test_ip_spoofing_via_trusted_proxy(self, client, monkeypatch):
+        monkeypatch.setattr("app.main.TRUSTED_PROXIES", {"testclient"})
+        for i in range(5):
+            res = client.get("/verify", headers={"X-Auth-Token": "wrong", "X-Forwarded-For": f"10.0.0.{i}"})
+            assert res.status_code == 401
+        res = client.get("/verify", headers={"X-Auth-Token": "wrong", "X-Forwarded-For": "10.0.0.99"})
+        assert res.status_code == 401
+
+    def test_invalid_content_length(self, client):
+        res = client.post(
+            "/upload",
+            content=b"test",
+            headers=auth() | {"Content-Length": "not-a-number"},
+        )
+        assert res.status_code == 400
+
+    def test_api_rate_limit(self, client, monkeypatch):
+        monkeypatch.setattr("app.main.API_RATE_LIMIT_MAX", 3)
+        for _ in range(3):
+            res = client.get("/api/history", headers=auth())
+            assert res.status_code == 200
+        res = client.get("/api/history", headers=auth())
+        assert res.status_code == 429
