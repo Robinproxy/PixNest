@@ -18,18 +18,15 @@ def setup(monkeypatch, tmp_path):
     upload_dir.mkdir()
     meta_dir = tmp_path / "data"
     meta_dir.mkdir()
-    static_dir = tmp_path / "static"
-    static_dir.mkdir()
     monkeypatch.setattr("app.main.UPLOAD_DIR", str(upload_dir))
     monkeypatch.setattr("app.main.META_DIR", str(meta_dir))
     monkeypatch.setattr("app.main.META_FILE", str(meta_dir / "meta.json"))
-    monkeypatch.setattr("app.main.STATIC_DIR", str(static_dir))
-    monkeypatch.setattr("app.main.FAVICON_PATH", str(static_dir / "favicon.ico"))
     monkeypatch.setattr("app.main.AUTH_TOKEN", TEST_TOKEN)
     monkeypatch.setattr("app.main.MAX_UPLOAD_BYTES", 1024 * 1024)
-    from app.main import _login_attempts, _upload_attempts
+    from app.main import _login_attempts, _upload_attempts, _FAVICON_ICO
     _login_attempts.clear()
     _upload_attempts.clear()
+    _FAVICON_ICO = None
 
 
 @pytest.fixture

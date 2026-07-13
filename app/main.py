@@ -1,4 +1,5 @@
 import asyncio
+import io
 import json
 import logging
 import os
@@ -17,16 +18,16 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads"))
 META_DIR = os.getenv("META_DIR", os.path.join(BASE_DIR, "data"))
 META_FILE = os.path.join(META_DIR, "meta.json")
-STATIC_DIR = os.path.join(BASE_DIR, "static")
-FAVICON_PATH = os.path.join(STATIC_DIR, "favicon.ico")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(META_DIR, exist_ok=True)
-os.makedirs(STATIC_DIR, exist_ok=True)
+
+_FAVICON_ICO: bytes | None = None
 
 
-def _generate_favicon() -> None:
-    if os.path.exists(FAVICON_PATH):
-        return
+def _generate_favicon() -> bytes:
+    global _FAVICON_ICO
+    if _FAVICON_ICO is not None:
+        return _FAVICON_ICO
     size = 32
     cx = cy = size / 2
     r = size / 2 - 1
@@ -52,12 +53,14 @@ def _generate_favicon() -> None:
         "<IiiHHIIiiII",
         40, size, size * 2, 1, 32, 0, len(pixels), 0, 0, 0, 0,
     )
-    with open(FAVICON_PATH, "wb") as f:
-        f.write(struct.pack("<HHH", 0, 1, 1))
-        f.write(struct.pack("<BBBBHHII", size, size, 0, 0, 1, 32, len(bmp_header) + len(pixels) + len(and_mask), 22))
-        f.write(bmp_header)
-        f.write(pixels)
-        f.write(and_mask)
+    buf = io.BytesIO()
+    buf.write(struct.pack("<HHH", 0, 1, 1))
+    buf.write(struct.pack("<BBBBHHII", size, size, 0, 0, 1, 32, len(bmp_header) + len(pixels) + len(and_mask), 22))
+    buf.write(bmp_header)
+    buf.write(pixels)
+    buf.write(and_mask)
+    _FAVICON_ICO = buf.getvalue()
+    return _FAVICON_ICO
 
 logger = logging.getLogger("pixnest")
 
@@ -360,9 +363,7 @@ async def verify_token(request: Request):
 
 @app.get("/favicon.ico")
 async def favicon():
-    if os.path.isfile(FAVICON_PATH):
-        return HTMLResponse(content=open(FAVICON_PATH, "rb").read(), media_type="image/x-icon")
-    raise HTTPException(status_code=404)
+    return HTMLResponse(content=_generate_favicon(), media_type="image/x-icon")
 
 
 @app.post("/upload")
