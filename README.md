@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='5' width='26' height='22' rx='6' fill='%238fa99b'/%3E%3Cpath d='M7 22l5.5-7 4 5 3-3.5L25 22H7z' fill='%23c9d6cd'/%3E%3Ccircle cx='12' cy='12' r='2.2' fill='%23f0d68a'/%3E%3C/svg%3E" width="64" height="64" alt="PixNest">
+  <img src="assets/logo.svg" width="64" height="64" alt="PixNest">
   <br>
   <h1>PixNest</h1>
   <p>轻量级私有图床 · 浏览器端压缩与水印 · Token 鉴权</p>
@@ -28,65 +28,20 @@ docker run -d -p 8000:8000 \
 
 打开 http://localhost:8000 ，输入密钥即可使用。
 
+> `AUTH_TOKEN` 默认值为 `123456`，生产环境务必修改为高强度密钥，否则任何知道该默认值的人都可以管理你的图床。
+
 ## 配置说明
 
 通过环境变量配置：
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `AUTH_TOKEN` | `123456` | 管理接口鉴权密钥 |
+| `AUTH_TOKEN` | `123456` | 管理接口鉴权密钥（生产环境必须修改） |
 | `PUBLIC_BASE_URL` | — | 图片直链的公网前缀，如 `https://img.example.com` |
 | `MAX_UPLOAD_MB` | `10` | 单文件大小上限（MB） |
 | `CLEANUP_INTERVAL_SEC` | `600` | 过期文件清理间隔（秒） |
 | `UPLOAD_DIR` | `app/uploads` | 图片和元数据存储目录 |
 | `TUNNEL_TOKEN` | — | Cloudflare Tunnel 令牌（docker-compose 使用） |
-
-## Docker Compose 部署（生产）
-
-```yaml
-services:
-  pixnest:
-    image: ghcr.io/robinproxy/pixnest:latest
-    build: .
-    container_name: pixnest
-    restart: always
-    volumes:
-      - ./app/uploads:/app/uploads
-    environment:
-      AUTH_TOKEN: ${AUTH_TOKEN:?Set AUTH_TOKEN in .env}
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
-      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-10}
-      CLEANUP_INTERVAL_SEC: ${CLEANUP_INTERVAL_SEC:-600}
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    container_name: cloudflared-pixnest
-    restart: always
-    command: tunnel run
-    environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?Set TUNNEL_TOKEN in .env}
-    depends_on:
-      pixnest:
-        condition: service_healthy
-```
-
-使用步骤：
-
-1. 复制 `cp .env.example .env`，填写 `AUTH_TOKEN` 和 `TUNNEL_TOKEN`
-2. 如需自定义图片链接域名，设置 `PUBLIC_BASE_URL`
-3. 执行 `docker compose up -d`
-
-应用容器不暴露宿主机端口，仅通过 Cloudflare Tunnel 访问。上传目录持久化在 `./app/uploads`。
-
-> 容器以非 root 用户（uid 1000）运行。如果使用宿主机目录挂载，需将目录归属设为 uid 1000：
-> ```bash
-> sudo chown -R 1000:1000 ./app/uploads
-> ```
 
 ## API 参考
 
