@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads"))
 META_FILE = os.path.join(UPLOAD_DIR, "meta.json")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -112,7 +112,7 @@ def save_meta(data: dict) -> None:
     os.replace(tmp, META_FILE)
 
 
-def get_expire_ts(entry) -> float | None:
+def get_expire_ts(entry: int | float | dict | None) -> float | None:
     if isinstance(entry, (int, float)):
         return float(entry)
     if isinstance(entry, dict) and "expire" in entry:
@@ -295,11 +295,14 @@ async def upload_image(
             os.remove(file_path)
         raise
 
-    if expire_days > 0:
-        async with _meta_lock:
-            meta = load_meta()
-            meta[new_filename] = time.time() + (expire_days * 86400)
-            save_meta(meta)
+    async with _meta_lock:
+        meta = load_meta()
+        now = time.time()
+        entry: dict[str, int | float] = {"size": written, "mtime": now}
+        if expire_days > 0:
+            entry["expire"] = now + (expire_days * 86400)
+        meta[new_filename] = entry
+        save_meta(meta)
 
     base_url = public_base(request)
     return JSONResponse(
@@ -336,16 +339,28 @@ async def get_history(
     images = []
     for filename in page_files:
         file_path = os.path.join(UPLOAD_DIR, filename)
-        try:
-            stat = os.stat(file_path)
-        except OSError:
-            continue
-        item = {
+        entry = meta.get(filename)
+        size_from_meta = None
+        mtime = None
+        if isinstance(entry, dict):
+            size_from_meta = entry.get("size")
+            mtime = entry.get("mtime")
+        if mtime is None:
+            try:
+                stat = os.stat(file_path)
+                if size_from_meta is None:
+                    size_from_meta = stat.st_size
+                mtime = stat.st_mtime
+            except OSError:
+                continue
+        item: dict[str, object] = {
             "filename": filename,
             "url": f"{base_url}i/{filename}",
-            "time": stat.st_mtime,
+            "time": mtime,
         }
-        expire_at = get_expire_ts(meta.get(filename))
+        if size_from_meta is not None:
+            item["size"] = size_from_meta
+        expire_at = get_expire_ts(entry)
         if expire_at is not None:
             item["expire_at"] = expire_at
         images.append(item)

@@ -4,12 +4,15 @@
 
 ## 功能
 
-- 访问密钥登录（`X-Auth-Token`）
+- 访问密钥登录（`X-Auth-Token`），5 次/60 秒登录限流
 - 点击 / 拖拽 / 粘贴上传
+- 服务端 Magic Bytes 校验，防止伪装扩展名
+- 客户端 EXIF 方向修正（`createImageBitmap` + `imageOrientation: 'from-image'`）
 - 客户端 WebP 压缩、质量滑块、水印
 - 可选过期（1 / 7 天），服务端定时清理
 - 图库浏览与删除
 - 直链 / HTML / Markdown / BBCode 一键复制
+- 上传进度条
 
 ## 本地运行
 
@@ -23,13 +26,24 @@ cd app && uvicorn main:app --host 0.0.0.0 --port 8000
 
 打开 http://localhost:8000
 
-## Docker + Cloudflare Tunnel
+## Docker
+
+```bash
+docker build -t pixnest .
+docker run -d -p 8000:8000 -v ./app/uploads:/app/uploads -e AUTH_TOKEN=your-secret pixnest
+```
+
+基于 `python:3.11-slim`，默认以 uid 1000 的非 root 用户运行，宿主机 uploads 目录需归 1000:1000。
+
+```bash
+sudo chown -R 1000:1000 app/uploads
+```
+
+## Docker + Cloudflare Tunnel（推荐）
 
 ```bash
 cp .env.example .env
 # 编辑 .env：设置 AUTH_TOKEN、TUNNEL_TOKEN，可选 PUBLIC_BASE_URL
-# 容器以 uid 1000 的非 root 用户运行，需让宿主 uploads 目录归该 uid 所有：
-sudo chown -R 1000:1000 app/uploads
 docker compose up -d --build
 ```
 
@@ -45,6 +59,7 @@ docker compose up -d --build
 | `PUBLIC_BASE_URL` | 空 | 生成链接时的公网根，如 `https://img.example.com` |
 | `MAX_UPLOAD_MB` | `10` | 单文件大小上限 |
 | `CLEANUP_INTERVAL_SEC` | `600` | 过期清理间隔（秒） |
+| `UPLOAD_DIR` | `app/uploads` | 图片存储路径 |
 | `TUNNEL_TOKEN` | — | Cloudflare Tunnel（compose 用） |
 
 ## API
@@ -53,9 +68,9 @@ docker compose up -d --build
 |------|------|------|------|
 | `GET` | `/` | 否 | 前端页面 |
 | `GET` | `/health` | 否 | 健康检查 |
-| `GET` | `/verify` | 是 | 校验密钥 |
+| `GET` | `/verify` | 是 | 校验密钥（限流 5/60s） |
 | `POST` | `/upload` | 是 | 上传（`file`, `expire_days`） |
-| `GET` | `/api/history` | 是 | 图库列表 |
+| `GET` | `/api/history` | 是 | 图库列表（分页，含文件大小） |
 | `DELETE` | `/api/delete/{filename}` | 是 | 删除 |
 | `GET` | `/i/{filename}` | 否 | 图片直链（知道 URL 即可访问） |
 
@@ -65,8 +80,27 @@ docker compose up -d --build
 
 - 写/列/删接口需密钥；**图片直链 `/i/*` 不鉴权**（图床常见模型）
 - 生产务必设置强 `AUTH_TOKEN`，勿提交 `.env`
-- 上传限制为常见图片类型与大小上限；删除做路径规范化，防止目录穿越
+- 登录限流：同一 IP 5 次/60 秒
+- 上传限制为常见图片类型与大小上限，Magic Bytes 校验文件真实格式
+- 删除做路径规范化，防止目录穿越
 - 日志不会打印密钥
+
+## 开发
+
+```bash
+# 安装开发依赖
+pip install -r requirements-dev.txt
+
+# 代码检查
+ruff check app/
+
+# 运行测试
+pytest tests/ -v
+```
+
+## License
+
+[MIT](LICENSE)
 
 ## 项目结构
 
@@ -74,6 +108,7 @@ docker compose up -d --build
 app/main.py       # FastAPI 后端
 app/index.html    # 单页前端
 app/uploads/      # 图片与 meta.json
+tests/            # 测试
 Dockerfile
 docker-compose.yml
 .env.example

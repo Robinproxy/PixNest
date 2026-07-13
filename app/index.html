@@ -300,7 +300,7 @@
             if (res.ok) showMain(true);
             else { clearToken(); showMain(false); }
         } catch (e) {
-            showMain(true);
+            showMain(false);
         }
     }
     checkLogin();
@@ -355,8 +355,10 @@
         rb.style.display = 'block';
 
         if (arr.length === 1) {
-            rb.innerHTML = '<div style="font-weight: 600; color: var(--success-text);">Processing & uploading...</div>';
-            const result = await uploadOne(arr[0], token);
+            rb.innerHTML = '<div id="upStatus" style="font-weight: 600; color: var(--success-text);">Processing...</div>';
+            const result = await uploadOne(arr[0], token, pct => {
+                $('upStatus').innerHTML = `Uploading... ${pct}%<div style="background:var(--border);border-radius:8px;height:6px;overflow:hidden;margin-top:8px"><div style="background:var(--accent);height:100%;width:${pct}%;transition:width 0.2s"></div></div>`;
+            });
             if (result === 401) return logout();
             renderSingleUpload(result);
             return;
@@ -364,35 +366,55 @@
 
         const results = [];
         for (let i = 0; i < arr.length; i++) {
-            rb.innerHTML = `<div style="font-weight: 600; color: var(--success-text);">Uploading ${i + 1}/${arr.length}...</div>`;
-            const r = await uploadOne(arr[i], token);
+            rb.innerHTML = `<div id="upStatus" style="font-weight: 600; color: var(--success-text);">Uploading ${i + 1}/${arr.length}...</div>`;
+            const r = await uploadOne(arr[i], token, pct => {
+                $('upStatus').innerHTML = `Uploading ${i + 1}/${arr.length}... ${pct}%<div style="background:var(--border);border-radius:8px;height:6px;overflow:hidden;margin-top:8px"><div style="background:var(--accent);height:100%;width:${pct}%;transition:width 0.2s"></div></div>`;
+            });
             if (r === 401) return logout();
             results.push(r);
         }
         renderMultiUpload(results);
     }
 
-    async function uploadOne(file, token) {
-        try {
-            let finalFile = file;
-            if (file.type !== 'image/gif') {
-                try {
-                    finalFile = await processImg(file, $('cWebp').checked, parseInt($('cQual').value) / 100, $('cWm').checked ? $('vWm').value : '');
-                } catch (e) {
-                    finalFile = file;
+    function uploadOne(file, token, onProgress) {
+        return new Promise(async (resolve) => {
+            try {
+                let finalFile = file;
+                if (file.type !== 'image/gif') {
+                    try {
+                        finalFile = await processImg(file, $('cWebp').checked, parseInt($('cQual').value) / 100, $('cWm').checked ? $('vWm').value : '');
+                    } catch (e) {
+                        finalFile = file;
+                    }
                 }
+                const fd = new FormData();
+                fd.append('file', finalFile, finalFile.name || file.name);
+                fd.append('expire_days', $('cExp').value);
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', '/upload');
+                xhr.setRequestHeader('X-Auth-Token', token);
+                xhr.upload.onprogress = e => {
+                    if (e.lengthComputable && onProgress) onProgress(Math.round(e.loaded / e.total * 100));
+                };
+                xhr.onload = () => {
+                    if (xhr.status === 401) return resolve(401);
+                    try {
+                        const data = JSON.parse(xhr.responseText || '{}');
+                        if (xhr.status >= 200 && xhr.status < 300) {
+                            resolve({ url: data.url, name: data.filename, ok: true });
+                        } else {
+                            resolve({ ok: false, error: typeof data.detail === 'string' ? data.detail : 'Upload failed' });
+                        }
+                    } catch (e) {
+                        resolve({ ok: false, error: 'Upload failed' });
+                    }
+                };
+                xhr.onerror = () => resolve({ ok: false, error: 'Something went wrong' });
+                xhr.send(fd);
+            } catch (e) {
+                resolve({ ok: false, error: 'Something went wrong' });
             }
-            const fd = new FormData();
-            fd.append('file', finalFile, finalFile.name || file.name);
-            fd.append('expire_days', $('cExp').value);
-            const res = await fetch('/upload', { method: 'POST', headers: { 'X-Auth-Token': token }, body: fd });
-            if (res.status === 401) return 401;
-            const data = await res.json().catch(() => ({}));
-            if (res.ok) return { url: data.url, name: data.filename, ok: true };
-            return { ok: false, error: typeof data.detail === 'string' ? data.detail : 'Upload failed' };
-        } catch (e) {
-            return { ok: false, error: 'Something went wrong' };
-        }
+        });
     }
 
     function renderSingleUpload(result) {
