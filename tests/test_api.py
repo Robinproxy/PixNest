@@ -18,9 +18,13 @@ def setup(monkeypatch, tmp_path):
     upload_dir.mkdir()
     meta_dir = tmp_path / "data"
     meta_dir.mkdir()
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
     monkeypatch.setattr("app.main.UPLOAD_DIR", str(upload_dir))
     monkeypatch.setattr("app.main.META_DIR", str(meta_dir))
     monkeypatch.setattr("app.main.META_FILE", str(meta_dir / "meta.json"))
+    monkeypatch.setattr("app.main.STATIC_DIR", str(static_dir))
+    monkeypatch.setattr("app.main.FAVICON_PATH", str(static_dir / "favicon.ico"))
     monkeypatch.setattr("app.main.AUTH_TOKEN", TEST_TOKEN)
     monkeypatch.setattr("app.main.MAX_UPLOAD_BYTES", 1024 * 1024)
     from app.main import _login_attempts, _upload_attempts
@@ -257,3 +261,21 @@ class TestSecurity:
             ).status_code == 429
             for _ in range(3)
         )
+
+    def test_favicon(self, client):
+        res = client.get("/favicon.ico")
+        assert res.status_code == 200
+        assert res.headers.get("content-type") == "image/x-icon"
+
+    def test_request_body_too_large(self, client):
+        res = client.post(
+            "/upload",
+            files={"file": ("large.png", _png_bytes(500), "image/png")},
+            headers=auth() | {"Content-Length": "999999999"},
+        )
+        assert res.status_code == 413
+
+    def test_csp_upgrade_insecure_requests(self, client):
+        res = client.get("/")
+        csp = res.headers["content-security-policy"]
+        assert "upgrade-insecure-requests" in csp

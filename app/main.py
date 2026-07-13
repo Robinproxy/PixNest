@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import secrets
+import struct
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -16,8 +17,47 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads"))
 META_DIR = os.getenv("META_DIR", os.path.join(BASE_DIR, "data"))
 META_FILE = os.path.join(META_DIR, "meta.json")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+FAVICON_PATH = os.path.join(STATIC_DIR, "favicon.ico")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(META_DIR, exist_ok=True)
+os.makedirs(STATIC_DIR, exist_ok=True)
+
+
+def _generate_favicon() -> None:
+    if os.path.exists(FAVICON_PATH):
+        return
+    size = 32
+    cx = cy = size / 2
+    r = size / 2 - 1
+    pixels = bytearray()
+    and_mask = bytearray()
+    for y in range(size - 1, -1, -1):
+        mask_byte = 0
+        for x in range(size):
+            dist = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5
+            if dist <= r:
+                alpha = 255
+                if dist > r - 1:
+                    alpha = max(0, min(255, int(255 * (r - dist))))
+                pixels.extend([0x8F, 0xA9, 0x9B, alpha])
+            else:
+                pixels.extend([0, 0, 0, 0])
+            if dist > r:
+                mask_byte |= 1 << (7 - x % 8)
+            if x % 8 == 7 or x == size - 1:
+                and_mask.append(mask_byte)
+                mask_byte = 0
+    bmp_header = struct.pack(
+        "<IiiHHIIiiII",
+        40, size, size * 2, 1, 32, 0, len(pixels), 0, 0, 0, 0,
+    )
+    with open(FAVICON_PATH, "wb") as f:
+        f.write(struct.pack("<HHH", 0, 1, 1))
+        f.write(struct.pack("<BBBBHHII", size, size, 0, 0, 1, 32, len(bmp_header) + len(pixels) + len(and_mask), 22))
+        f.write(bmp_header)
+        f.write(pixels)
+        f.write(and_mask)
 
 logger = logging.getLogger("pixnest")
 
@@ -186,6 +226,7 @@ async def cleanup_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _generate_favicon()
     await cleanup_expired()
     task = asyncio.create_task(cleanup_loop())
     yield
@@ -213,7 +254,8 @@ _CSP_POLICY = (
     "frame-ancestors 'none'; "
     "form-action 'none'; "
     "base-uri 'none'; "
-    "object-src 'none'"
+    "object-src 'none'; "
+    "upgrade-insecure-requests"
 )
 
 
@@ -241,9 +283,20 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 
-def require_auth(x_auth_token: str | None = Header(None)) -> str:
+_MAX_BODY_BYTES = MAX_UPLOAD_BYTES + 1024 * 1024
+
+
+@app.middleware("http")
+async def limit_request_body(request: Request, call_next):
+    cl = request.headers.get("content-length")
+    if cl and int(cl) > _MAX_BODY_BYTES:
+        return JSONResponse(status_code=413, content={"detail": "Request too large"})
+    return await call_next(request)
+
+
+def require_auth(request: Request, x_auth_token: str | None = Header(None)) -> str:
     if not AUTH_TOKEN or not x_auth_token or not secrets.compare_digest(x_auth_token, AUTH_TOKEN):
-        logger.warning("Authentication failed: invalid or missing token")
+        logger.warning("Authentication failed from %s", _get_client_ip(request))
         raise HTTPException(status_code=401, detail="Unauthorized")
     return x_auth_token
 
@@ -305,6 +358,13 @@ async def verify_token(request: Request):
     return {"success": True}
 
 
+@app.get("/favicon.ico")
+async def favicon():
+    if os.path.isfile(FAVICON_PATH):
+        return HTMLResponse(content=open(FAVICON_PATH, "rb").read(), media_type="image/x-icon")
+    raise HTTPException(status_code=404)
+
+
 @app.post("/upload")
 async def upload_image(
     request: Request,
@@ -363,6 +423,7 @@ async def upload_image(
         save_meta(meta)
 
     base_url = public_base(request)
+    logger.info("Uploaded %s (%d bytes) from %s", new_filename, written, _get_client_ip(request))
     return JSONResponse(
         content={
             "success": True,
@@ -432,7 +493,7 @@ async def get_history(
 
 
 @app.delete("/api/delete/{filename}")
-async def delete_image(filename: str, _: str = Depends(require_auth)):
+async def delete_image(request: Request, filename: str, _: str = Depends(require_auth)):
     safe = safe_filename(filename)
     file_path = os.path.join(UPLOAD_DIR, safe)
     if not os.path.isfile(file_path):
@@ -443,4 +504,5 @@ async def delete_image(filename: str, _: str = Depends(require_auth)):
         if safe in meta:
             del meta[safe]
             save_meta(meta)
+    logger.info("Deleted %s from %s", safe, _get_client_ip(request))
     return {"success": True}
