@@ -21,6 +21,8 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 logger = logging.getLogger("pixnest")
 
 AUTH_TOKEN = os.getenv("AUTH_TOKEN", "123456")
+if AUTH_TOKEN == "123456":
+    logger.warning("AUTH_TOKEN is using default value '123456'; set a strong token in production.")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
 
@@ -39,6 +41,34 @@ MAX_UPLOAD_BYTES = _env_int("MAX_UPLOAD_MB", 10) * 1024 * 1024
 CLEANUP_INTERVAL_SEC = _env_int("CLEANUP_INTERVAL_SEC", 600)
 
 _meta_lock = asyncio.Lock()
+
+RATE_LIMIT_WINDOW = 60
+RATE_LIMIT_MAX = 5
+_login_attempts: dict[str, list[float]] = {}
+
+
+def _get_client_ip(request: Request) -> str:
+    cf_ip = request.headers.get("CF-Connecting-IP")
+    if cf_ip:
+        return cf_ip.strip()
+    xff = request.headers.get("X-Forwarded-For")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _check_rate_limit(ip: str) -> None:
+    now = time.time()
+    attempts = _login_attempts.get(ip, [])
+    recent = [t for t in attempts if now - t < RATE_LIMIT_WINDOW]
+    if len(recent) >= RATE_LIMIT_MAX:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts, try again later",
+            headers={"Retry-After": str(RATE_LIMIT_WINDOW)},
+        )
+    recent.append(now)
+    _login_attempts[ip] = recent
 
 ALLOWED_EXT = {"jpg", "jpeg", "png", "gif", "webp", "bmp"}
 FILENAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -121,6 +151,13 @@ async def cleanup_loop():
     while True:
         try:
             await cleanup_expired()
+            now = time.time()
+            for ip in list(_login_attempts):
+                recent = [t for t in _login_attempts[ip] if now - t < RATE_LIMIT_WINDOW]
+                if recent:
+                    _login_attempts[ip] = recent
+                else:
+                    del _login_attempts[ip]
         except Exception:
             logger.exception("cleanup loop error")
         await asyncio.sleep(CLEANUP_INTERVAL_SEC)
@@ -205,7 +242,12 @@ async def read_index():
 
 
 @app.get("/verify")
-async def verify_token(_: str = Depends(require_auth)):
+async def verify_token(request: Request):
+    ip = _get_client_ip(request)
+    _check_rate_limit(ip)
+    token = request.headers.get("X-Auth-Token")
+    if not token or not secrets.compare_digest(token, AUTH_TOKEN):
+        raise HTTPException(status_code=401, detail="Unauthorized")
     return {"success": True}
 
 
@@ -238,6 +280,8 @@ async def upload_image(
                         detail=f"File too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)}MB)",
                     )
                 buffer.write(chunk)
+        if written == 0:
+            raise HTTPException(status_code=400, detail="Empty file")
     except HTTPException:
         if os.path.isfile(file_path):
             os.remove(file_path)
