@@ -23,10 +23,9 @@ def setup(monkeypatch, tmp_path):
     monkeypatch.setattr("app.main.META_FILE", str(meta_dir / "meta.json"))
     monkeypatch.setattr("app.main.AUTH_TOKEN", TEST_TOKEN)
     monkeypatch.setattr("app.main.MAX_UPLOAD_BYTES", 1024 * 1024)
-    from app.main import _login_attempts, _upload_attempts, _FAVICON_ICO
+    from app.main import _login_attempts, _upload_attempts
     _login_attempts.clear()
     _upload_attempts.clear()
-    _FAVICON_ICO = None
 
 
 @pytest.fixture

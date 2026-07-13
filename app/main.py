@@ -1,11 +1,10 @@
 import asyncio
-import io
+import base64
 import json
 import logging
 import os
 import re
 import secrets
-import struct
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -21,46 +20,7 @@ META_FILE = os.path.join(META_DIR, "meta.json")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(META_DIR, exist_ok=True)
 
-_FAVICON_ICO: bytes | None = None
-
-
-def _generate_favicon() -> bytes:
-    global _FAVICON_ICO
-    if _FAVICON_ICO is not None:
-        return _FAVICON_ICO
-    size = 32
-    cx = cy = size / 2
-    r = size / 2 - 1
-    pixels = bytearray()
-    and_mask = bytearray()
-    for y in range(size - 1, -1, -1):
-        mask_byte = 0
-        for x in range(size):
-            dist = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5
-            if dist <= r:
-                alpha = 255
-                if dist > r - 1:
-                    alpha = max(0, min(255, int(255 * (r - dist))))
-                pixels.extend([0x8F, 0xA9, 0x9B, alpha])
-            else:
-                pixels.extend([0, 0, 0, 0])
-            if dist > r:
-                mask_byte |= 1 << (7 - x % 8)
-            if x % 8 == 7 or x == size - 1:
-                and_mask.append(mask_byte)
-                mask_byte = 0
-    bmp_header = struct.pack(
-        "<IiiHHIIiiII",
-        40, size, size * 2, 1, 32, 0, len(pixels), 0, 0, 0, 0,
-    )
-    buf = io.BytesIO()
-    buf.write(struct.pack("<HHH", 0, 1, 1))
-    buf.write(struct.pack("<BBBBHHII", size, size, 0, 0, 1, 32, len(bmp_header) + len(pixels) + len(and_mask), 22))
-    buf.write(bmp_header)
-    buf.write(pixels)
-    buf.write(and_mask)
-    _FAVICON_ICO = buf.getvalue()
-    return _FAVICON_ICO
+_FAVICON_ICO = base64.b64decode("AAABAAEAICAAAAEAIACoEAAAFgAAACgAAAAgAAAAQAAAAAEAIAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAj6mbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAj6mbIo+pm3CPqZutj6mb2o+pm/WPqZv/j6mb9Y+pm9qPqZutj6mbcI+pmyIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAj6mbO4+pm62PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm62PqZs7AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAj6mbAI+pm5OPqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZuTj6mbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAI+pmyKPqZvIj6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZvIj6mbIgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACPqZsij6mb2o+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZvaj6mbIgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAj6mbAI+pm8iPqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZvIj6mbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACPqZuTj6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZuTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAj6mbO4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZs7AAAAAAAAAAAAAAAAAAAAAAAAAACPqZutj6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm60AAAAAAAAAAAAAAAAAAAAAj6mbIo+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pmyIAAAAAAAAAAAAAAACPqZtwj6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mbcAAAAAAAAAAAAAAAAI+pm62PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZutAAAAAAAAAAAAAAAAj6mb2o+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm9oAAAAAAAAAAAAAAACPqZv1j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb9QAAAAAAAAAAj6mbAI+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mbAAAAAAAAAAAAj6mb9Y+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/UAAAAAAAAAAAAAAACPqZvaj6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb2gAAAAAAAAAAAAAAAI+pm62PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZutAAAAAAAAAAAAAAAAj6mbcI+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm3AAAAAAAAAAAAAAAACPqZsij6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mbIgAAAAAAAAAAAAAAAAAAAACPqZutj6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm60AAAAAAAAAAAAAAAAAAAAAAAAAAI+pmzuPqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mbOwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAI+pm5OPqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm5MAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAj6mbAI+pm8iPqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZvIj6mbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAj6mbIo+pm9qPqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb2o+pmyIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAj6mbIo+pm8iPqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm8iPqZsiAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAj6mbAI+pm5OPqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZuTj6mbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAI+pmzuPqZutj6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZv/j6mb/4+pm/+PqZutj6mbOwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACPqZsij6mbcI+pm62PqZvaj6mb9Y+pm/+PqZv1j6mb2o+pm62PqZtwj6mbIgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAj6mbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//9////gA///gAD//gAAP/wAAB/4AAAP8AAAB/AAAAfgAAAD4AAAA8AAAAHAAAABwAAAAcAAAAHAAAABgAAAAMAAAAHAAAABwAAAAcAAAAHAAAAB4AAAA+AAAAPwAAAH8AAAB/gAAA/8AAAf/gAAP/+AAP//4AP///9///////8=")
 
 logger = logging.getLogger("pixnest")
 
@@ -105,28 +65,13 @@ def _get_client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _check_rate_limit(ip: str) -> None:
+def _rate_limit(ip: str, attempts: dict, window: int, limit: int, detail: str) -> None:
     now = time.time()
-    attempts = _login_attempts.get(ip, [])
-    recent = [t for t in attempts if now - t < RATE_LIMIT_WINDOW]
-    if len(recent) >= RATE_LIMIT_MAX:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many login attempts, try again later",
-            headers={"Retry-After": str(RATE_LIMIT_WINDOW)},
-        )
+    recent = [t for t in attempts.get(ip, []) if now - t < window]
+    if len(recent) >= limit:
+        raise HTTPException(status_code=429, detail=detail, headers={"Retry-After": str(window)})
     recent.append(now)
-    _login_attempts[ip] = recent
-
-
-def _check_upload_rate_limit(ip: str) -> None:
-    now = time.time()
-    attempts = _upload_attempts.get(ip, [])
-    recent = [t for t in attempts if now - t < UPLOAD_RATE_LIMIT_WINDOW]
-    if len(recent) >= UPLOAD_RATE_LIMIT_MAX:
-        raise HTTPException(status_code=429, detail="Too many uploads, try again later")
-    recent.append(now)
-    _upload_attempts[ip] = recent
+    attempts[ip] = recent
 
 ALLOWED_EXT = {"jpg", "jpeg", "png", "gif", "webp", "bmp"}
 FILENAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -210,18 +155,13 @@ async def cleanup_loop():
         try:
             await cleanup_expired()
             now = time.time()
-            for ip in list(_login_attempts):
-                recent = [t for t in _login_attempts[ip] if now - t < RATE_LIMIT_WINDOW]
-                if recent:
-                    _login_attempts[ip] = recent
-                else:
-                    del _login_attempts[ip]
-            for ip in list(_upload_attempts):
-                recent = [t for t in _upload_attempts[ip] if now - t < UPLOAD_RATE_LIMIT_WINDOW]
-                if recent:
-                    _upload_attempts[ip] = recent
-                else:
-                    del _upload_attempts[ip]
+            for attempts, window in (_login_attempts, RATE_LIMIT_WINDOW), (_upload_attempts, UPLOAD_RATE_LIMIT_WINDOW):
+                for ip in list(attempts):
+                    recent = [t for t in attempts[ip] if now - t < window]
+                    if recent:
+                        attempts[ip] = recent
+                    else:
+                        del attempts[ip]
         except Exception:
             logger.exception("cleanup loop error")
         await asyncio.sleep(CLEANUP_INTERVAL_SEC)
@@ -229,7 +169,6 @@ async def cleanup_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _generate_favicon()
     await cleanup_expired()
     task = asyncio.create_task(cleanup_loop())
     yield
@@ -353,7 +292,7 @@ async def read_index():
 @app.get("/verify")
 async def verify_token(request: Request):
     ip = _get_client_ip(request)
-    _check_rate_limit(ip)
+    _rate_limit(ip, _login_attempts, RATE_LIMIT_WINDOW, RATE_LIMIT_MAX, "Too many login attempts, try again later")
     token = request.headers.get("X-Auth-Token")
     if not token or not secrets.compare_digest(token, AUTH_TOKEN):
         logger.warning("Verify failed: invalid token from %s", ip)
@@ -363,7 +302,7 @@ async def verify_token(request: Request):
 
 @app.get("/favicon.ico")
 async def favicon():
-    return HTMLResponse(content=_generate_favicon(), media_type="image/x-icon")
+    return HTMLResponse(content=_FAVICON_ICO, media_type="image/x-icon")
 
 
 @app.post("/upload")
@@ -374,7 +313,7 @@ async def upload_image(
     _: str = Depends(require_auth),
 ):
     ip = _get_client_ip(request)
-    _check_upload_rate_limit(ip)
+    _rate_limit(ip, _upload_attempts, UPLOAD_RATE_LIMIT_WINDOW, UPLOAD_RATE_LIMIT_MAX, "Too many uploads, try again later")
 
     if expire_days < 0:
         expire_days = 0
@@ -405,10 +344,6 @@ async def upload_image(
                 buffer.write(chunk)
         if written == 0:
             raise HTTPException(status_code=400, detail="Empty file")
-    except HTTPException:
-        if os.path.isfile(file_path):
-            os.remove(file_path)
-        raise
     except Exception:
         if os.path.isfile(file_path):
             os.remove(file_path)
