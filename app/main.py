@@ -19,9 +19,9 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 logger = logging.getLogger("pixnest")
 
-AUTH_TOKEN = os.getenv("AUTH_TOKEN", "123456")
-if AUTH_TOKEN == "123456":
-    logger.warning("AUTH_TOKEN is using default value '123456'; set a strong token in production.")
+AUTH_TOKEN = os.getenv("AUTH_TOKEN")
+if not AUTH_TOKEN:
+    logger.warning("AUTH_TOKEN is not set. All authenticated requests will be rejected.")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
 
@@ -194,7 +194,7 @@ app.mount("/i", CachedStaticFiles(directory=UPLOAD_DIR), name="images")
 
 
 def require_auth(x_auth_token: str | None = Header(None)) -> str:
-    if not x_auth_token or not secrets.compare_digest(x_auth_token, AUTH_TOKEN):
+    if not AUTH_TOKEN or not x_auth_token or not secrets.compare_digest(x_auth_token, AUTH_TOKEN):
         raise HTTPException(status_code=401, detail="Unauthorized")
     return x_auth_token
 
