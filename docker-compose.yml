@@ -1,9 +1,11 @@
 services:
-  nano-imgbed:
+  pixnest:
     image: ghcr.io/robinproxy/pixnest:latest
     build: .
     container_name: pixnest
     restart: always
+    ports:
+      - "8000:8000"
     volumes:
       - ./app/uploads:/app/uploads
     environment:
@@ -17,14 +19,3 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    container_name: cloudflared-pixnest
-    restart: always
-    command: tunnel run
-    environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?Set TUNNEL_TOKEN in .env}
-    depends_on:
-      nano-imgbed:
-        condition: service_healthy

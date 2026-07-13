@@ -19,7 +19,7 @@
 
 ## Docker Compose 部署
 
-项目根目录附带 `docker-compose.yml`，包含 PixNest 应用和 Cloudflare Tunnel（可选）两个服务。
+项目根目录附带 `docker-compose.yml`，一键启动 PixNest 应用。
 
 ### 前置准备
 
@@ -27,10 +27,11 @@
 cp .env.example .env
 ```
 
-编辑 `.env` 文件，填写必要配置：
+编辑 `.env` 文件，设置 `AUTH_TOKEN`（管理接口密钥，**必填**）：
 
-- `AUTH_TOKEN` — 管理接口密钥，**必填**，设为高强度随机字符串
-- `TUNNEL_TOKEN` — Cloudflare Tunnel 令牌，如需公网暴露则填写
+```ini
+AUTH_TOKEN=your-strong-random-secret
+```
 
 容器以非 root 用户（uid 1000）运行。宿主机挂载目录需归该 uid 所有：
 
@@ -44,7 +45,30 @@ sudo chown -R 1000:1000 app/uploads
 docker compose up -d
 ```
 
-启动后应用容器仅内部可用，不做宿主机端口映射。如果配置了 `TUNNEL_TOKEN`，`cloudflared` 会自动建立 Tunnel 将服务暴露到公网。
+### 访问
+
+打开 http://localhost:8000 ，输入 `.env` 中配置的 `AUTH_TOKEN` 即可使用。
+
+### 环境变量详解
+
+`docker-compose.yml` 中的环境变量从 `.env` 文件读取，语法说明如下：
+
+| Compose 写法 | 含义 |
+|---|---|
+| `${AUTH_TOKEN:?Set AUTH_TOKEN in .env}` | 从 `.env` 读取，**必填**，缺少时启动报错 |
+| `${PUBLIC_BASE_URL:-}` | 从 `.env` 读取，**可选**，不填则为空 |
+| `${MAX_UPLOAD_MB:-10}` | 可选，不填默认为 `10` |
+| `${CLEANUP_INTERVAL_SEC:-600}` | 可选，不填默认为 `600` |
+
+全部可用变量：
+
+| 变量 | 必填 | 默认值 | 说明 |
+|---|---|---|---|
+| `AUTH_TOKEN` | 是 | — | 管理接口鉴权密钥 |
+| `PUBLIC_BASE_URL` | 否 | 空 | 图片直链的公网前缀，如 `https://img.example.com` |
+| `MAX_UPLOAD_MB` | 否 | `10` | 单文件大小上限（MB） |
+| `CLEANUP_INTERVAL_SEC` | 否 | `600` | 过期文件清理间隔（秒） |
+| `UPLOAD_DIR` | 否 | `app/uploads` | 图片和元数据存储目录（仅 Docker 单容器运行） |
 
 ### 健康检查
 
@@ -52,26 +76,11 @@ docker compose up -d
 docker compose ps
 ```
 
-两个服务均显示 `healthy` 即为正常运行。
+服务状态为 `healthy` 即正常运行。
 
-### 仅启动应用（不使用 Tunnel）
+## Docker 单容器运行
 
-```bash
-docker compose up -d pixnest
-```
-
-如需本地访问，修改 `docker-compose.yml` 的 `pixnest` 服务添加端口映射：
-
-```yaml
-ports:
-  - "8000:8000"
-```
-
-打开 http://localhost:8000 ，输入 `AUTH_TOKEN` 即可使用。
-
-## Docker 快速体验
-
-不使用 Compose 时，单容器运行：
+不使用 Compose 时：
 
 ```bash
 docker run -d -p 8000:8000 \
@@ -79,17 +88,6 @@ docker run -d -p 8000:8000 \
   -v ./uploads:/app/uploads \
   ghcr.io/robinproxy/pixnest:latest
 ```
-
-## 配置说明
-
-| 变量 | 默认值 | 说明 |
-|---|---|---|
-| `AUTH_TOKEN` | — | 管理接口鉴权密钥（必填，未设置时所有管理接口返回 401） |
-| `PUBLIC_BASE_URL` | — | 图片直链的公网前缀，如 `https://img.example.com` |
-| `MAX_UPLOAD_MB` | `10` | 单文件大小上限（MB） |
-| `CLEANUP_INTERVAL_SEC` | `600` | 过期文件清理间隔（秒） |
-| `UPLOAD_DIR` | `app/uploads` | 图片和元数据存储目录 |
-| `TUNNEL_TOKEN` | — | Cloudflare Tunnel 令牌（docker-compose 使用） |
 
 ## API 参考
 
