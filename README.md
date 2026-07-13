@@ -23,15 +23,30 @@
 
 ### 前置准备
 
+#### 1. 生成密钥并创建 .env
+
+在项目目录下执行以下命令，自动生成 64 位随机 `AUTH_TOKEN` 并写入 `.env`：
+
 ```bash
-cp .env.example .env
+TOKEN=$(openssl rand -hex 32)
+cat > .env << EOF
+AUTH_TOKEN=$TOKEN
+PUBLIC_BASE_URL=https://img.your-domain.com
+MAX_UPLOAD_MB=10
+CLEANUP_INTERVAL_SEC=600
+EOF
 ```
 
-编辑 `.env` 文件，设置 `AUTH_TOKEN`（管理接口密钥，**必填**）：
+> **PUBLIC_BASE_URL 说明：**
+>
+> | 场景 | 填什么 |
+> |---|---|
+> | 有域名指向这台 VPS，如 `img.example.com` | `https://img.example.com` |
+> | 只通过 `http://VPS_IP:8000` 访问 | 不填（留空，链接自动用当前请求地址） |
+>
+> 如果暂时没域名，执行前把 `PUBLIC_BASE_URL` 那行删掉。
 
-```ini
-AUTH_TOKEN=your-strong-random-secret
-```
+#### 2. 设置目录权限
 
 容器以非 root 用户（uid 1000）运行。宿主机挂载目录需归该 uid 所有：
 
