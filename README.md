@@ -11,7 +11,7 @@
 
 | 分类 | 说明 |
 |---|---|
-| **安全** | Token 鉴权，登录限流（每 IP 5 次/60 秒），Magic Bytes 文件格式校验 |
+| **安全** | Token 鉴权，登录/上传/API 三级限流，Magic Bytes 文件校验，Host 头防护，IP 伪造防护 |
 | **上传** | 点击 / 拖拽 / 粘贴上传，批量上传，进度条显示 |
 | **处理** | 客户端 WebP 转换，质量滑块，文字水印，EXIF 方向自动修正 |
 | **分发** | 直链 / HTML / Markdown / BBCode 一键复制，图库浏览，灯箱导航 |
@@ -32,6 +32,8 @@ TOKEN=$(openssl rand -hex 32)
 cat > .env << EOF
 AUTH_TOKEN=$TOKEN
 PUBLIC_BASE_URL=https://img.your-domain.com
+ALLOWED_HOSTS=img.your-domain.com
+TRUSTED_PROXIES=127.0.0.1
 MAX_UPLOAD_MB=10
 CLEANUP_INTERVAL_SEC=600
 EOF
@@ -45,6 +47,8 @@ EOF
 > | 只通过 `http://VPS_IP:8000` 访问 | 不填（留空，链接自动用当前请求地址） |
 >
 > 如果暂时没域名，执行前把 `PUBLIC_BASE_URL` 那行删掉。
+>
+> `ALLOWED_HOSTS` 和 `TRUSTED_PROXIES` 为可选加固项，详见下方[部署加固](#部署加固)。
 
 #### 2. 设置目录权限
 
@@ -72,6 +76,8 @@ docker compose up -d
 |---|---|
 | `${AUTH_TOKEN:?Set AUTH_TOKEN in .env}` | 从 `.env` 读取，**必填**，缺少时启动报错 |
 | `${PUBLIC_BASE_URL:-}` | 从 `.env` 读取，**可选**，不填则为空 |
+| `${ALLOWED_HOSTS:-}` | 可选，不填则不校验 Host 头 |
+| `${TRUSTED_PROXIES:-}` | 可选，不填则不信任转发头 |
 | `${MAX_UPLOAD_MB:-10}` | 可选，不填默认为 `10` |
 | `${CLEANUP_INTERVAL_SEC:-600}` | 可选，不填默认为 `600` |
 
@@ -79,8 +85,10 @@ docker compose up -d
 
 | 变量 | 必填 | 默认值 | 说明 |
 |---|---|---|---|
-| `AUTH_TOKEN` | 是 | — | 管理接口鉴权密钥 |
+| `AUTH_TOKEN` | 是 | - | 管理接口鉴权密钥 |
 | `PUBLIC_BASE_URL` | 否 | 空 | 图片直链的公网前缀，如 `https://img.example.com` |
+| `ALLOWED_HOSTS` | 否 | 空 | 允许的 Host 头，逗号分隔，如 `img.example.com,localhost` |
+| `TRUSTED_PROXIES` | 否 | 空 | 信任的代理 IP，逗号分隔，如 `127.0.0.1` |
 | `MAX_UPLOAD_MB` | 否 | `10` | 单文件大小上限（MB） |
 | `CLEANUP_INTERVAL_SEC` | 否 | `600` | 过期文件清理间隔（秒） |
 | `UPLOAD_DIR` | 否 | `app/uploads` | 图片和元数据存储目录（仅 Docker 单容器运行） |
@@ -123,10 +131,50 @@ docker run -d -p 8000:8000 \
 - 写 / 列 / 删接口均需 `X-Auth-Token` 鉴权
 - `AUTH_TOKEN` 未设置时所有管理接口返回 401，拒绝服务
 - 图片直链 `/i/*` 不鉴权（图床通用模型）
-- 登录接口限流：每 IP 60 秒内最多 5 次尝试
+- 三级限流：登录 5 次/60 秒，上传 30 次/60 秒，API 60 次/60 秒（均按 IP）
 - 上传文件通过 Magic Bytes 校验真实格式，不依赖扩展名
 - 文件名做路径规范化处理，防止目录穿越
 - 鉴权密钥不会出现在日志中
+- 响应头包含 CSP / X-Frame-Options / X-Content-Type-Options / Referrer-Policy / HSTS
+
+### 部署加固
+
+以下两个环境变量为可选项，**建议在生产环境中配置**。它们的值是公开配置（非密钥），知道值不影响安全性。
+
+#### `ALLOWED_HOSTS`
+
+防止 **Host 头注入**。当 `PUBLIC_BASE_URL` 未设置时，上传返回的图片 URL 会取自请求的 `Host` 头，攻击者可伪造 Host 让 URL 指向钓鱼域名。
+
+设置后，中间件会校验每个请求的 Host 头，不在白名单中的请求直接返回 400。
+
+```bash
+# .env
+ALLOWED_HOSTS=img.example.com,localhost
+```
+
+> 配合 `PUBLIC_BASE_URL` 使用效果最佳：`PUBLIC_BASE_URL` 固定 URL 域名，`ALLOWED_HOSTS` 拦截伪造 Host 的请求。
+
+#### `TRUSTED_PROXIES`
+
+防止 **IP 伪造绕过限流**。默认情况下，`X-Forwarded-For` 和 `CF-Connecting-IP` 头被忽略，直接使用 TCP 连接的真实 IP。这意味着在反向代理后面，所有请求的 IP 都会显示为代理 IP，限流无法区分用户。
+
+设置后，仅当请求来自信任的代理 IP 时，才会读取转发头来获取真实客户端 IP。
+
+```bash
+# .env
+TRUSTED_PROXIES=127.0.0.1
+```
+
+#### 常见部署场景配置
+
+| 场景 | ALLOWED_HOSTS | TRUSTED_PROXIES | 说明 |
+|---|---|---|---|
+| Cloudflare Tunnel | `img.example.com` | `127.0.0.1` | Tunnel 在本地连接，Cloudflare 设置 `CF-Connecting-IP` |
+| Nginx 反向代理 | `img.example.com` | `127.0.0.1` | Nginx 设置 `X-Forwarded-For` |
+| 直接暴露端口 | 不设 | 不设 | 无反代，TCP IP 即真实 IP，无需信任转发头 |
+| 本地开发 | 不设 | 不设 | 默认行为，不做额外校验 |
+
+> **安全原理**：这些值是校验规则而非密钥。攻击者即使知道 `TRUSTED_PROXIES=127.0.0.1`，也无法伪造 TCP 连接的来源 IP；知道 `ALLOWED_HOSTS` 也不会获得任何额外权限。唯一需要保密的是 `AUTH_TOKEN`。
 
 ## 开发
 
