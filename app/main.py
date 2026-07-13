@@ -5,6 +5,7 @@ import json
 import uuid
 import secrets
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -17,13 +18,51 @@ UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 META_FILE = os.path.join(UPLOAD_DIR, "meta.json")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+logger = logging.getLogger("pixnest")
+
 AUTH_TOKEN = os.getenv("AUTH_TOKEN", "123456")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
-MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "10")) * 1024 * 1024
-CLEANUP_INTERVAL_SEC = int(os.getenv("CLEANUP_INTERVAL_SEC", "600"))
+
+
+def _env_int(key: str, default: int) -> int:
+    val = os.getenv(key)
+    if val is None:
+        return default
+    try:
+        return int(val)
+    except ValueError:
+        logger.warning("Invalid %s=%r, using default %d", key, val, default)
+        return default
+
+
+MAX_UPLOAD_BYTES = _env_int("MAX_UPLOAD_MB", 10) * 1024 * 1024
+CLEANUP_INTERVAL_SEC = _env_int("CLEANUP_INTERVAL_SEC", 600)
+
+_meta_lock = asyncio.Lock()
 
 ALLOWED_EXT = {"jpg", "jpeg", "png", "gif", "webp", "bmp"}
 FILENAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def validate_image_magic(data: bytes, ext: str) -> None:
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file content")
+    if ext == "webp":
+        if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+            raise HTTPException(status_code=400, detail="File content does not match WEBP format")
+        return
+    magics = {
+        "jpg": (b"\xff\xd8\xff",),
+        "jpeg": (b"\xff\xd8\xff",),
+        "png": (b"\x89PNG\r\n\x1a\n",),
+        "gif": (b"GIF87a", b"GIF89a"),
+        "bmp": (b"BM",),
+    }
+    expected = magics.get(ext)
+    if expected is None:
+        return
+    if not any(data.startswith(m) for m in expected):
+        raise HTTPException(status_code=400, detail=f"File content does not match {ext.upper()} format")
 
 
 def load_meta() -> dict:
@@ -52,43 +91,44 @@ def get_expire_ts(entry) -> Optional[float]:
     return None
 
 
-def cleanup_expired() -> int:
-    meta = load_meta()
-    if not meta:
-        return 0
-    now = time.time()
-    removed = 0
-    changed = False
-    for filename, entry in list(meta.items()):
-        expire_at = get_expire_ts(entry)
-        if expire_at is None or expire_at > now:
-            continue
-        path = os.path.join(UPLOAD_DIR, filename)
-        if os.path.isfile(path):
-            try:
-                os.remove(path)
-            except OSError:
-                pass
-        del meta[filename]
-        removed += 1
-        changed = True
-    if changed:
-        save_meta(meta)
+async def cleanup_expired() -> int:
+    async with _meta_lock:
+        meta = load_meta()
+        if not meta:
+            return 0
+        now = time.time()
+        removed = 0
+        changed = False
+        for filename, entry in list(meta.items()):
+            expire_at = get_expire_ts(entry)
+            if expire_at is None or expire_at > now:
+                continue
+            path = os.path.join(UPLOAD_DIR, filename)
+            if os.path.isfile(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    logger.warning("Failed to remove expired file: %s", filename)
+            del meta[filename]
+            removed += 1
+            changed = True
+        if changed:
+            save_meta(meta)
     return removed
 
 
 async def cleanup_loop():
     while True:
         try:
-            cleanup_expired()
+            await cleanup_expired()
         except Exception:
-            pass
+            logger.exception("cleanup loop error")
         await asyncio.sleep(CLEANUP_INTERVAL_SEC)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    cleanup_expired()
+    await cleanup_expired()
     task = asyncio.create_task(cleanup_loop())
     yield
     task.cancel()
@@ -179,26 +219,39 @@ async def upload_image(
     if file.content_type and not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Only image uploads are allowed")
 
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="Empty file")
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)}MB)",
-        )
-
     ext = normalize_ext(file.filename, file.content_type)
     new_filename = f"{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}.{ext}"
     file_path = os.path.join(UPLOAD_DIR, new_filename)
 
-    with open(file_path, "wb") as buffer:
-        buffer.write(content)
+    written = 0
+    try:
+        with open(file_path, "wb") as buffer:
+            first = True
+            while chunk := await file.read(1024 * 1024):
+                if first:
+                    validate_image_magic(chunk, ext)
+                    first = False
+                written += len(chunk)
+                if written > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)}MB)",
+                    )
+                buffer.write(chunk)
+    except HTTPException:
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+        raise
+    except Exception:
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+        raise
 
     if expire_days > 0:
-        meta = load_meta()
-        meta[new_filename] = time.time() + (expire_days * 86400)
-        save_meta(meta)
+        async with _meta_lock:
+            meta = load_meta()
+            meta[new_filename] = time.time() + (expire_days * 86400)
+            save_meta(meta)
 
     base_url = public_base(request)
     return JSONResponse(
@@ -206,7 +259,7 @@ async def upload_image(
             "success": True,
             "url": f"{base_url}i/{new_filename}",
             "filename": new_filename,
-            "size": len(content),
+            "size": written,
         }
     )
 
@@ -235,7 +288,10 @@ async def get_history(
     images = []
     for filename in page_files:
         file_path = os.path.join(UPLOAD_DIR, filename)
-        stat = os.stat(file_path)
+        try:
+            stat = os.stat(file_path)
+        except OSError:
+            continue
         item = {
             "filename": filename,
             "url": f"{base_url}i/{filename}",
@@ -261,8 +317,9 @@ async def delete_image(filename: str, _: str = Depends(require_auth)):
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="Not found")
     os.remove(file_path)
-    meta = load_meta()
-    if safe in meta:
-        del meta[safe]
-        save_meta(meta)
+    async with _meta_lock:
+        meta = load_meta()
+        if safe in meta:
+            del meta[safe]
+            save_meta(meta)
     return {"success": True}
