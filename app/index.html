@@ -114,7 +114,31 @@
         .lightbox.open img { transform: scale(1); }
         .lb-close { position: absolute; top: 24px; right: 24px; width: 40px; height: 40px; border: none; border-radius: 50%; background: rgba(255,253,249,0.15); color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.25s var(--ease); }
         .lb-close:hover { background: rgba(255,253,249,0.3); }
+        .lb-prev, .lb-next { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border: none; border-radius: 50%; background: rgba(255,253,249,0.15); color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.25s var(--ease); }
+        .lb-prev { left: 24px; }
+        .lb-next { right: 24px; }
+        .lb-prev:hover, .lb-next:hover { background: rgba(255,253,249,0.3); }
+        .lb-prev.hidden, .lb-next.hidden { display: none; }
         .g-img-box img { cursor: zoom-in; }
+
+        .nav-toggle { display: none; position: fixed; top: 16px; left: 16px; z-index: 999; width: 42px; height: 42px; border: none; border-radius: 12px; background: var(--card); box-shadow: 0 2px 10px rgba(74,69,64,0.12); cursor: pointer; align-items: center; justify-content: center; color: var(--text-main); }
+        .sidebar-backdrop { display: none; position: fixed; inset: 0; background: rgba(45,40,35,0.4); z-index: 998; }
+
+        .upload-list { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; text-align: left; }
+        .upload-item { display: flex; gap: 8px; align-items: center; }
+        .upload-item .url-display { flex: 1; margin-bottom: 0; text-align: left; font-size: 12px; padding: 10px 12px; }
+        .upload-item .fmt-btn { flex-shrink: 0; }
+        .upload-item.failed { color: var(--danger); font-size: 13px; padding: 8px 0; }
+
+        @media (max-width: 768px) {
+            .sidebar { position: fixed; top: 0; bottom: 0; left: 0; z-index: 1001; transform: translateX(-100%); transition: transform 0.3s var(--ease); }
+            .sidebar.open { transform: translateX(0); box-shadow: 4px 0 24px rgba(0,0,0,0.12); }
+            .sidebar-backdrop.show { display: block; }
+            .nav-toggle { display: flex; }
+            .content { padding: 64px 20px 40px; }
+            #loginView { padding: 32px 24px; }
+            .login-headline { font-size: 26px; }
+        }
     </style>
 </head>
 <body>
@@ -146,7 +170,11 @@
 </div>
 
 <div id="mainView">
-    <aside class="sidebar">
+    <button class="nav-toggle" onclick="toggleSidebar()" aria-label="Menu">
+        <svg class="icon-svg" style="width:20px;height:20px;" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+    </button>
+    <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebar()"></div>
+    <aside class="sidebar" id="sidebar">
         <div class="sidebar-brand">
             <svg class="logo-mark" viewBox="0 0 32 32" aria-hidden="true"><use href="#pixnest-logo"/></svg>
             <span>PixNest</span>
@@ -178,7 +206,7 @@
                 <div class="drop-bar-title">Drop, paste, or click to upload</div>
                 <div class="drop-bar-sub">WebP compression · EXIF stripped · Optional expiry</div>
             </div>
-            <input type="file" id="fileInput" style="display: none;" accept="image/*">
+            <input type="file" id="fileInput" style="display: none;" accept="image/*" multiple>
 
             <div class="settings-bar">
                 <label><input type="checkbox" id="cWebp" checked> WebP</label>
@@ -208,6 +236,12 @@
     <img id="lightboxImg" src="" alt="" onclick="event.stopPropagation()">
     <button class="lb-close" onclick="closeLightbox()" aria-label="Close">
         <svg class="icon-svg" style="width:18px;height:18px;stroke-width:2;" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+    </button>
+    <button class="lb-prev hidden" id="lbPrev" onclick="lbNav(-1, event)" aria-label="Previous">
+        <svg class="icon-svg" style="width:24px;height:24px;stroke-width:2;" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>
+    </button>
+    <button class="lb-next hidden" id="lbNext" onclick="lbNav(1, event)" aria-label="Next">
+        <svg class="icon-svg" style="width:24px;height:24px;stroke-width:2;" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>
     </button>
 </div>
 
@@ -277,6 +311,17 @@
         $('panelUpload').style.display = tab === 'upload' ? 'block' : 'none';
         $('panelGallery').style.display = tab === 'gallery' ? 'grid' : 'none';
         if (tab === 'gallery') loadGallery();
+        closeSidebar();
+    }
+
+    function toggleSidebar() {
+        $('sidebar').classList.toggle('open');
+        $('sidebarBackdrop').classList.toggle('show');
+    }
+
+    function closeSidebar() {
+        $('sidebar').classList.remove('open');
+        $('sidebarBackdrop').classList.remove('show');
     }
 
     const dz = $('dropZone');
@@ -287,15 +332,33 @@
     dz.addEventListener('drop', e => handleFiles(e.dataTransfer.files));
 
     async function handleFiles(files) {
-        if (!files.length) return;
-        const file = files[0];
+        const arr = Array.from(files);
+        if (!arr.length) return;
         const token = getToken();
         if (!token) return logout();
 
         const rb = $('resultBox');
         rb.style.display = 'block';
-        rb.innerHTML = '<div style="font-weight: 600; color: var(--success-text);">Processing & uploading...</div>';
 
+        if (arr.length === 1) {
+            rb.innerHTML = '<div style="font-weight: 600; color: var(--success-text);">Processing & uploading...</div>';
+            const result = await uploadOne(arr[0], token);
+            if (result === 401) return logout();
+            renderSingleUpload(result);
+            return;
+        }
+
+        const results = [];
+        for (let i = 0; i < arr.length; i++) {
+            rb.innerHTML = `<div style="font-weight: 600; color: var(--success-text);">Uploading ${i + 1}/${arr.length}...</div>`;
+            const r = await uploadOne(arr[i], token);
+            if (r === 401) return logout();
+            results.push(r);
+        }
+        renderMultiUpload(results);
+    }
+
+    async function uploadOne(file, token) {
         try {
             let finalFile = file;
             if (file.type !== 'image/gif') {
@@ -305,38 +368,74 @@
                     finalFile = file;
                 }
             }
-
             const fd = new FormData();
             fd.append('file', finalFile, finalFile.name || file.name);
             fd.append('expire_days', $('cExp').value);
-
             const res = await fetch('/upload', { method: 'POST', headers: { 'X-Auth-Token': token }, body: fd });
-            if (res.status === 401) return logout();
+            if (res.status === 401) return 401;
             const data = await res.json().catch(() => ({}));
-
-            if (res.ok) {
-                try { await navigator.clipboard.writeText(data.url); } catch (e) {}
-
-                const uid = 'up-' + Date.now();
-                rb.innerHTML = `
-                    <div style="color: var(--success-text); font-weight: 600; font-size: 18px; margin-bottom: 16px;">
-                        Uploaded
-                    </div>
-                    <input type="text" id="url-${uid}" class="url-display" value="${data.url}" readonly onclick="this.select()">
-                    <div class="format-group" id="grp-${uid}">
-                        <button class="fmt-btn active-link" onclick="updateFormat('${uid}', this, '${data.url}', 'link')">Link</button>
-                        <button class="fmt-btn" onclick="updateFormat('${uid}', this, '<img src=&quot;${data.url}&quot;>', 'code')">&lt;/&gt; HTML</button>
-                        <button class="fmt-btn" onclick="updateFormat('${uid}', this, '![img](${data.url})', 'code')">Markdown</button>
-                        <button class="fmt-btn" onclick="updateFormat('${uid}', this, '[img]${data.url}[/img]', 'code')">BBCode</button>
-                    </div>
-                `;
-            } else {
-                const detail = data.detail || 'Upload failed';
-                rb.innerHTML = `<div style="color: red;">${typeof detail === 'string' ? detail : 'Upload failed'}</div>`;
-            }
+            if (res.ok) return { url: data.url, name: data.filename, ok: true };
+            return { ok: false, error: typeof data.detail === 'string' ? data.detail : 'Upload failed' };
         } catch (e) {
-            rb.innerHTML = '<div style="color: red;">Something went wrong</div>';
+            return { ok: false, error: 'Something went wrong' };
         }
+    }
+
+    function renderSingleUpload(result) {
+        const rb = $('resultBox');
+        if (!result.ok) {
+            rb.innerHTML = `<div style="color: red;">${result.error}</div>`;
+            return;
+        }
+        try { navigator.clipboard.writeText(result.url); } catch (e) {}
+        const uid = 'up-' + Date.now();
+        rb.innerHTML = `
+            <div style="color: var(--success-text); font-weight: 600; font-size: 18px; margin-bottom: 16px;">Uploaded</div>
+            <input type="text" id="url-${uid}" class="url-display" value="${result.url}" readonly onclick="this.select()">
+            <div class="format-group" id="grp-${uid}">
+                <button class="fmt-btn active-link" onclick="updateFormat('${uid}', this, '${result.url}', 'link')">Link</button>
+                <button class="fmt-btn" onclick="updateFormat('${uid}', this, '<img src=&quot;${result.url}&quot;>', 'code')">&lt;/&gt; HTML</button>
+                <button class="fmt-btn" onclick="updateFormat('${uid}', this, '![img](${result.url})', 'code')">Markdown</button>
+                <button class="fmt-btn" onclick="updateFormat('${uid}', this, '[img]${result.url}[/img]', 'code')">BBCode</button>
+            </div>`;
+    }
+
+    function renderMultiUpload(results) {
+        const rb = $('resultBox');
+        const ok = results.filter(r => r.ok);
+        const fail = results.filter(r => !r.ok);
+        if (!ok.length) {
+            rb.innerHTML = `<div style="color: red;">All ${fail.length} uploads failed</div>`;
+            return;
+        }
+        try { navigator.clipboard.writeText(ok.map(r => r.url).join('\n')); } catch (e) {}
+        const items = ok.map(r => `
+            <div class="upload-item">
+                <input type="text" class="url-display" value="${r.url}" readonly onclick="this.select()">
+                <button class="fmt-btn" onclick="copyOne(this, '${r.url}')">Copy</button>
+            </div>`).join('');
+        const fails = fail.map(r => `<div class="upload-item failed">${r.error}</div>`).join('');
+        rb.innerHTML = `
+            <div style="color: var(--success-text); font-weight: 600; font-size: 18px; margin-bottom: 4px;">Uploaded ${ok.length}/${results.length}</div>
+            <div style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">All links copied to clipboard</div>
+            <button class="fmt-btn active-link" style="margin-bottom: 4px;" onclick="copyAllLinks(this)">Copy all links</button>
+            <div class="upload-list">${items}${fails}</div>`;
+    }
+
+    function copyOne(btn, url) {
+        navigator.clipboard.writeText(url).then(() => {
+            btn.classList.add('active-link');
+            setTimeout(() => btn.classList.remove('active-link'), 800);
+        }).catch(() => {});
+    }
+
+    function copyAllLinks(btn) {
+        const inputs = document.querySelectorAll('#resultBox .upload-item .url-display');
+        const text = Array.from(inputs).map(i => i.value).join('\n');
+        navigator.clipboard.writeText(text).then(() => {
+            btn.classList.add('active-link');
+            setTimeout(() => btn.classList.remove('active-link'), 800);
+        }).catch(() => {});
     }
 
     async function updateFormat(uid, btn, text, styleType) {
@@ -454,10 +553,29 @@
         }
     }
 
+    let lbImages = [];
+    let lbIndex = 0;
+
     function openLightbox(url) {
-        $('lightboxImg').src = url;
+        const imgs = Array.from(document.querySelectorAll('.g-img-box img'));
+        lbImages = imgs.map(i => i.src);
+        lbIndex = lbImages.indexOf(url);
+        if (lbIndex < 0) { lbImages = [url]; lbIndex = 0; }
+        showLightbox();
+    }
+
+    function showLightbox() {
+        $('lightboxImg').src = lbImages[lbIndex];
+        $('lbPrev').classList.toggle('hidden', lbIndex <= 0);
+        $('lbNext').classList.toggle('hidden', lbIndex >= lbImages.length - 1);
         $('lightbox').classList.add('open');
         document.body.style.overflow = 'hidden';
+    }
+
+    function lbNav(dir, e) {
+        if (e) e.stopPropagation();
+        lbIndex = Math.max(0, Math.min(lbImages.length - 1, lbIndex + dir));
+        showLightbox();
     }
 
     function closeLightbox() {
@@ -466,7 +584,12 @@
         document.body.style.overflow = '';
     }
 
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+    document.addEventListener('keydown', e => {
+        if (!$('lightbox').classList.contains('open')) return;
+        if (e.key === 'Escape') closeLightbox();
+        else if (e.key === 'ArrowLeft') lbNav(-1);
+        else if (e.key === 'ArrowRight') lbNav(1);
+    });
 
     function processImg(file, toWebp, q, wmText) {
         return new Promise((resolve, reject) => {
