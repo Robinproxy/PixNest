@@ -154,8 +154,8 @@
         <h1 class="login-headline">Your images,<br>in one place.</h1>
         <p class="login-sub">Enter your access key to continue</p>
         <div class="login-input-row">
-            <input type="password" id="passInput" class="login-input" placeholder="Access key">
-            <button class="login-go" id="loginBtn" aria-label="Enter">
+            <input type="password" id="passInput" class="login-input" placeholder="Access key" onkeydown="if(event.key==='Enter') login()">
+            <button class="login-go" onclick="login()" aria-label="Enter">
                 <svg class="icon-svg" style="width:20px;height:20px;" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
             </button>
         </div>
@@ -164,26 +164,26 @@
 </div>
 
 <div id="mainView">
-    <button class="nav-toggle" id="navToggle" aria-label="Menu">
+    <button class="nav-toggle" onclick="toggleSidebar()" aria-label="Menu">
         <svg class="icon-svg" style="width:20px;height:20px;" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
     </button>
-    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+    <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebar()"></div>
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-brand">
             <svg class="logo-mark" viewBox="0 0 32 32" aria-hidden="true"><use href="#pixnest-logo"/></svg>
             <span>PixNest</span>
         </div>
         <nav class="sidebar-nav">
-            <button class="side-item active" id="tabUpload">
+            <button class="side-item active" id="tabUpload" onclick="switchTab('upload')">
                 <svg class="icon-svg" style="width:18px;height:18px;" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
                 Upload
             </button>
-            <button class="side-item" id="tabGallery">
+            <button class="side-item" id="tabGallery" onclick="switchTab('gallery')">
                 <svg class="icon-svg" style="width:18px;height:18px;" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
                 Gallery
             </button>
         </nav>
-        <button class="side-logout" id="logoutBtn">
+        <button class="side-logout" onclick="logout()">
             <svg class="icon-svg" style="width:16px;height:16px;" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
             Logout
         </button>
@@ -205,7 +205,7 @@
             <div class="settings-bar">
                 <label><input type="checkbox" id="cWebp" checked> WebP</label>
                 <div class="range-wrap">
-                    <input type="range" id="cQual" min="10" max="100" value="90">
+                    <input type="range" id="cQual" min="10" max="100" value="90" oninput="document.getElementById('qv').innerText=this.value">
                     <span class="q-val" id="qv">90</span>
                 </div>
 
@@ -226,15 +226,15 @@
     </main>
 </div>
 
-<div class="lightbox" id="lightbox">
-    <img id="lightboxImg" src="" alt="">
-    <button class="lb-close" id="lbClose" aria-label="Close">
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+    <img id="lightboxImg" src="" alt="" onclick="event.stopPropagation()">
+    <button class="lb-close" onclick="closeLightbox()" aria-label="Close">
         <svg class="icon-svg" style="width:18px;height:18px;stroke-width:2;" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
     </button>
-    <button class="lb-prev hidden" id="lbPrev" aria-label="Previous">
+    <button class="lb-prev hidden" id="lbPrev" onclick="lbNav(-1, event)" aria-label="Previous">
         <svg class="icon-svg" style="width:24px;height:24px;stroke-width:2;" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"></polyline></svg>
     </button>
-    <button class="lb-next hidden" id="lbNext" aria-label="Next">
+    <button class="lb-next hidden" id="lbNext" onclick="lbNav(1, event)" aria-label="Next">
         <svg class="icon-svg" style="width:24px;height:24px;stroke-width:2;" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"></polyline></svg>
     </button>
 </div>
@@ -428,12 +428,12 @@
         _urlCache[uid] = result.url;
         rb.innerHTML = `
             <div style="color: var(--success-text); font-weight: 600; font-size: 18px; margin-bottom: 16px;">Uploaded</div>
-            <input type="text" id="url-${uid}" class="url-display" value="${esc(result.url)}" readonly>
+            <input type="text" id="url-${uid}" class="url-display" value="${esc(result.url)}" readonly onclick="this.select()">
             <div class="format-group" id="grp-${uid}">
-                <button class="fmt-btn active-link" data-uid="${uid}" data-fmt="link">Link</button>
-                <button class="fmt-btn" data-uid="${uid}" data-fmt="html">&lt;/&gt; HTML</button>
-                <button class="fmt-btn" data-uid="${uid}" data-fmt="md">Markdown</button>
-                <button class="fmt-btn" data-uid="${uid}" data-fmt="bb">BBCode</button>
+                <button class="fmt-btn active-link" onclick="updateFormat('${uid}', this, 'link')">Link</button>
+                <button class="fmt-btn" onclick="updateFormat('${uid}', this, 'html')">&lt;/&gt; HTML</button>
+                <button class="fmt-btn" onclick="updateFormat('${uid}', this, 'md')">Markdown</button>
+                <button class="fmt-btn" onclick="updateFormat('${uid}', this, 'bb')">BBCode</button>
             </div>`;
     }
 
@@ -448,14 +448,14 @@
         try { navigator.clipboard.writeText(ok.map(r => r.url).join('\n')); } catch (e) {}
         const items = ok.map(r => `
             <div class="upload-item">
-                <input type="text" class="url-display" value="${esc(r.url)}" readonly>
-                <button class="fmt-btn copy-one-btn" data-url="${esc(r.url)}">Copy</button>
+                <input type="text" class="url-display" value="${esc(r.url)}" readonly onclick="this.select()">
+                <button class="fmt-btn" data-url="${esc(r.url)}" onclick="copyOne(this)">Copy</button>
             </div>`).join('');
         const fails = fail.map(r => `<div class="upload-item failed">${esc(r.error)}</div>`).join('');
         rb.innerHTML = `
             <div style="color: var(--success-text); font-weight: 600; font-size: 18px; margin-bottom: 4px;">Uploaded ${ok.length}/${results.length}</div>
             <div style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">All links copied to clipboard</div>
-            <button class="fmt-btn active-link copy-all-btn" style="margin-bottom: 4px;">Copy all links</button>
+            <button class="fmt-btn active-link" style="margin-bottom: 4px;" onclick="copyAllLinks(this)">Copy all links</button>
             <div class="upload-list">${items}${fails}</div>`;
     }
 
@@ -513,18 +513,18 @@
         return `
                 <div class="g-card" id="card-${esc(img.filename)}">
                     <div class="g-img-box">
-                        <img src="${esc(img.url)}" loading="lazy" data-lb-url="${esc(img.url)}">
-                        <button class="g-del" title="Delete" data-name="${esc(img.filename)}">
+                        <img src="${esc(img.url)}" loading="lazy" onclick="openLightbox(this.src)">
+                        <button class="g-del" title="Delete" data-name="${esc(img.filename)}" onclick="del(this.dataset.name)">
                             <svg class="icon-svg" style="width:14px;height:14px;" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                         </button>
                     </div>
                     <div class="g-info">
                         <div class="g-meta">${dateStr}${formatExpire(img.expire_at)}</div>
                         <div class="format-group g-copy-row" id="grp-${uid}">
-                            <button class="fmt-btn active-link" data-uid="${uid}" data-fmt="link">Link</button>
-                            <button class="fmt-btn" data-uid="${uid}" data-fmt="html">&lt;/&gt;</button>
-                            <button class="fmt-btn" data-uid="${uid}" data-fmt="md">MD</button>
-                            <button class="fmt-btn" data-uid="${uid}" data-fmt="bb">BB</button>
+                            <button class="fmt-btn active-link" onclick="updateFormat('${uid}', this, 'link')">Link</button>
+                            <button class="fmt-btn" onclick="updateFormat('${uid}', this, 'html')">&lt;/&gt;</button>
+                            <button class="fmt-btn" onclick="updateFormat('${uid}', this, 'md')">MD</button>
+                            <button class="fmt-btn" onclick="updateFormat('${uid}', this, 'bb')">BB</button>
                         </div>
                     </div>
                 </div>`;
@@ -544,7 +544,7 @@
             const btn = document.createElement('div');
             btn.id = 'loadMoreBtn';
             btn.style.cssText = 'grid-column: 1/-1; text-align: center; padding: 20px;';
-            btn.innerHTML = '<button class="fmt-btn load-more-btn" style="padding: 12px 32px;">Load more</button>';
+            btn.innerHTML = '<button class="fmt-btn" style="padding: 12px 32px;" onclick="loadMoreGallery()">Load more</button>';
             pg.appendChild(btn);
         }
     }
@@ -665,42 +665,6 @@
             }).catch(() => reject(new Error('image load failed')));
         });
     }
-
-    document.addEventListener('DOMContentLoaded', () => {
-        $('passInput').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
-        $('loginBtn').addEventListener('click', login);
-        $('navToggle').addEventListener('click', toggleSidebar);
-        $('sidebarBackdrop').addEventListener('click', closeSidebar);
-        $('tabUpload').addEventListener('click', () => switchTab('upload'));
-        $('tabGallery').addEventListener('click', () => switchTab('gallery'));
-        $('logoutBtn').addEventListener('click', logout);
-        $('cQual').addEventListener('input', function () { $('qv').innerText = this.value; });
-        $('lightbox').addEventListener('click', closeLightbox);
-        $('lightboxImg').addEventListener('click', e => e.stopPropagation());
-        $('lbClose').addEventListener('click', closeLightbox);
-        $('lbPrev').addEventListener('click', e => lbNav(-1, e));
-        $('lbNext').addEventListener('click', e => lbNav(1, e));
-
-        $('resultBox').addEventListener('click', e => {
-            const input = e.target.closest('.url-display');
-            if (input) input.select();
-            const btn = e.target.closest('.fmt-btn[data-uid]');
-            if (btn) updateFormat(btn.dataset.uid, btn, btn.dataset.fmt);
-            const copyBtn = e.target.closest('.copy-one-btn');
-            if (copyBtn) copyOne(copyBtn);
-            const copyAll = e.target.closest('.copy-all-btn');
-            if (copyAll) copyAllLinks(copyAll);
-        });
-
-        $('panelGallery').addEventListener('click', e => {
-            const img = e.target.closest('.g-img-box img');
-            if (img) openLightbox(img.dataset.lbUrl || img.src);
-            const delBtn = e.target.closest('.g-del');
-            if (delBtn) del(delBtn.dataset.name);
-            const moreBtn = e.target.closest('.load-more-btn');
-            if (moreBtn) loadMoreGallery();
-        });
-    });
 </script>
 </body>
 </html>

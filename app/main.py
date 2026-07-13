@@ -1,6 +1,4 @@
 import asyncio
-import base64
-import hashlib
 import json
 import logging
 import os
@@ -206,18 +204,10 @@ if os.path.exists(_index_path):
     with open(_index_path, encoding="utf-8") as f:
         _INDEX_HTML = f.read()
 
-_CSP_HASHES: dict[str, str] = {}
-if _INDEX_HTML:
-    for tag in ("script", "style"):
-        m = re.search(rf"<{tag}\b[^>]*>(.*?)</{tag}>", _INDEX_HTML, re.DOTALL)
-        if m:
-            h = base64.b64encode(hashlib.sha256(m.group(1).encode("utf-8")).digest()).decode("ascii")
-            _CSP_HASHES[tag] = f"'sha256-{h}'"
-
 _CSP_POLICY = (
     "default-src 'self'; "
-    f"script-src 'self' {_CSP_HASHES.get('script', '')}; "
-    f"style-src 'self' {_CSP_HASHES.get('style', '')}; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
     "img-src 'self' data: blob:; "
     "connect-src 'self'; "
     "frame-ancestors 'none'; "

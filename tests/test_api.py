@@ -214,10 +214,10 @@ class TestSecurity:
         assert "frame-ancestors 'none'" in csp
         assert "default-src 'self'" in csp
 
-    def test_csp_hashes_present(self, client):
+    def test_csp_unsafe_inline(self, client):
         res = client.get("/")
         csp = res.headers["content-security-policy"]
-        assert "sha256-" in csp
+        assert "unsafe-inline" in csp
 
     def test_meta_json_not_served(self, client):
         res = client.get("/i/meta.json")
