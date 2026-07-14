@@ -265,6 +265,14 @@ def require_auth(request: Request, x_auth_token: str | None = Header(None)) -> s
     return x_auth_token
 
 
+def require_auth_upload(request: Request, x_auth_token: str | None = Header(None)) -> str:
+    if not AUTH_TOKEN or not x_auth_token or not secrets.compare_digest(x_auth_token, AUTH_TOKEN):
+        logger.warning("Authentication failed from %s", _get_client_ip(request))
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    _rate_limit(_get_client_ip(request), _upload_attempts, UPLOAD_RATE_LIMIT_WINDOW, UPLOAD_RATE_LIMIT_MAX, "Too many uploads, try again later")
+    return x_auth_token
+
+
 def public_base(request: Request) -> str:
     if PUBLIC_BASE_URL:
         return PUBLIC_BASE_URL + "/"
@@ -330,13 +338,10 @@ async def favicon():
 @app.post("/upload")
 async def upload_image(
     request: Request,
+    _: str = Depends(require_auth_upload),
     file: UploadFile = File(...),
     expire_days: int = Form(0),
-    _: str = Depends(require_auth),
 ):
-    ip = _get_client_ip(request)
-    _rate_limit(ip, _upload_attempts, UPLOAD_RATE_LIMIT_WINDOW, UPLOAD_RATE_LIMIT_MAX, "Too many uploads, try again later")
-
     if expire_days < 0:
         expire_days = 0
     elif expire_days > 365:
@@ -460,7 +465,10 @@ async def delete_image(request: Request, filename: str, _: str = Depends(require
     file_path = os.path.join(UPLOAD_DIR, safe)
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="Not found")
-    os.remove(file_path)
+    try:
+        os.remove(file_path)
+    except FileNotFoundError:
+        pass
     async with _meta_lock:
         meta = load_meta()
         if safe in meta:
