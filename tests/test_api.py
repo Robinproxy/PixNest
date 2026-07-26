@@ -315,6 +315,47 @@ class TestSecurity:
         )
         assert res.status_code == 400
 
+    def test_api_auth_bruteforce_rate_limited(self, client):
+        for _ in range(5):
+            res = client.get("/api/history", headers={"X-Auth-Token": "wrong"})
+            assert res.status_code == 401
+        res = client.get("/api/history", headers={"X-Auth-Token": "wrong"})
+        assert res.status_code == 429
+        res = client.get("/api/history", headers=auth())
+        assert res.status_code == 429
+
+    def test_upload_auth_bruteforce_rate_limited(self, client):
+        for _ in range(5):
+            res = client.post(
+                "/upload",
+                files={"file": ("test.png", _png_bytes(50), "image/png")},
+                headers={"X-Auth-Token": "wrong"},
+            )
+            assert res.status_code == 401
+        res = client.post(
+            "/upload",
+            files={"file": ("test.png", _png_bytes(50), "image/png")},
+            headers={"X-Auth-Token": "wrong"},
+        )
+        assert res.status_code == 429
+
+    def test_verify_success_not_rate_limited(self, client):
+        for _ in range(10):
+            res = client.get("/verify", headers=auth())
+            assert res.status_code == 200
+
+    def test_history_hides_dotfiles(self, client, tmp_path):
+        (tmp_path / "uploads" / ".DS_Store").write_bytes(b"junk")
+        res = client.get("/api/history", headers=auth())
+        assert res.status_code == 200
+        assert res.json()["images"] == []
+
+    def test_delete_traversal_blocked(self, client):
+        res = client.delete("/api/delete/..%2F..%2Fmeta.json", headers=auth())
+        assert res.status_code in (400, 404)
+        res = client.delete("/api/delete/meta.json", headers=auth())
+        assert res.status_code == 400
+
     def test_api_rate_limit(self, client, monkeypatch):
         monkeypatch.setattr("app.main.API_RATE_LIMIT_MAX", 3)
         for _ in range(3):

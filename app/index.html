@@ -298,7 +298,8 @@
         try {
             const res = await fetch('/verify', { headers: { 'X-Auth-Token': token } });
             if (res.ok) showMain(true);
-            else { clearToken(); showMain(false); }
+            else if (res.status === 401) { clearToken(); showMain(false); }
+            else showMain(false);
         } catch (e) {
             showMain(false);
         }
@@ -311,6 +312,7 @@
         try {
             const res = await fetch('/verify', { headers: { 'X-Auth-Token': pwd } });
             if (res.ok) { setToken(pwd); showMain(true); }
+            else if (res.status === 429) alert('Too many attempts, try again in a minute');
             else alert('Wrong access key');
         } catch (error) { alert('Server not responding'); }
     }

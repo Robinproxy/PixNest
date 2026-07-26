@@ -10,7 +10,7 @@ import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -76,16 +76,28 @@ def _get_client_ip(request: Request) -> str:
     return client_ip
 
 
-def _rate_limit(ip: str, attempts: dict, window: int, limit: int, detail: str) -> None:
+def _check_rate_limit(ip: str, attempts: dict, window: int, limit: int, detail: str) -> None:
     now = time.time()
     recent = [t for t in attempts.get(ip, []) if now - t < window]
+    if recent:
+        attempts[ip] = recent
+    else:
+        attempts.pop(ip, None)
     if len(recent) >= limit:
         raise HTTPException(status_code=429, detail=detail, headers={"Retry-After": str(window)})
-    recent.append(now)
-    attempts[ip] = recent
+
+
+def _record_attempt(ip: str, attempts: dict, window: int) -> None:
+    now = time.time()
+    attempts.setdefault(ip, []).append(now)
     if len(attempts) > _RATE_LIMIT_MAX_ENTRIES:
         for k in [k for k, v in attempts.items() if not any(now - t < window for t in v)]:
             del attempts[k]
+
+
+def _rate_limit(ip: str, attempts: dict, window: int, limit: int, detail: str) -> None:
+    _check_rate_limit(ip, attempts, window, limit, detail)
+    _record_attempt(ip, attempts, window)
 
 ALLOWED_EXT = {"jpg", "jpeg", "png", "gif", "webp", "bmp"}
 FILENAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -120,6 +132,7 @@ def load_meta() -> dict:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except (json.JSONDecodeError, OSError):
+        logger.exception("Failed to load %s; treating metadata as empty (expiry info lost)", META_FILE)
         return {}
 
 
@@ -259,18 +272,19 @@ async def limit_request_body(request: Request, call_next):
 
 
 def require_auth(request: Request, x_auth_token: str | None = Header(None)) -> str:
+    ip = _get_client_ip(request)
+    _check_rate_limit(ip, _login_attempts, RATE_LIMIT_WINDOW, RATE_LIMIT_MAX, "Too many login attempts, try again later")
     if not AUTH_TOKEN or not x_auth_token or not secrets.compare_digest(x_auth_token, AUTH_TOKEN):
-        logger.warning("Authentication failed from %s", _get_client_ip(request))
+        _record_attempt(ip, _login_attempts, RATE_LIMIT_WINDOW)
+        logger.warning("Authentication failed from %s", ip)
         raise HTTPException(status_code=401, detail="Unauthorized")
     return x_auth_token
 
 
 def require_auth_upload(request: Request, x_auth_token: str | None = Header(None)) -> str:
-    if not AUTH_TOKEN or not x_auth_token or not secrets.compare_digest(x_auth_token, AUTH_TOKEN):
-        logger.warning("Authentication failed from %s", _get_client_ip(request))
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    token = require_auth(request, x_auth_token)
     _rate_limit(_get_client_ip(request), _upload_attempts, UPLOAD_RATE_LIMIT_WINDOW, UPLOAD_RATE_LIMIT_MAX, "Too many uploads, try again later")
-    return x_auth_token
+    return token
 
 
 def public_base(request: Request) -> str:
@@ -320,19 +334,13 @@ async def read_index():
 
 
 @app.get("/verify")
-async def verify_token(request: Request):
-    ip = _get_client_ip(request)
-    _rate_limit(ip, _login_attempts, RATE_LIMIT_WINDOW, RATE_LIMIT_MAX, "Too many login attempts, try again later")
-    token = request.headers.get("X-Auth-Token")
-    if not AUTH_TOKEN or not token or not secrets.compare_digest(token, AUTH_TOKEN):
-        logger.warning("Verify failed: invalid token from %s", ip)
-        raise HTTPException(status_code=401, detail="Unauthorized")
+async def verify_token(_: str = Depends(require_auth)):
     return {"success": True}
 
 
 @app.get("/favicon.ico")
 async def favicon():
-    return HTMLResponse(content=_FAVICON_ICO, media_type="image/x-icon")
+    return Response(content=_FAVICON_ICO, media_type="image/x-icon")
 
 
 @app.post("/upload")
@@ -414,7 +422,7 @@ async def get_history(
     base_url = public_base(request)
     all_files = [
         f for f in os.listdir(UPLOAD_DIR)
-        if f != "meta.json" and not f.endswith(".tmp") and f != ".gitkeep"
+        if not f.startswith(".") and f != "meta.json" and not f.endswith(".tmp")
     ]
     all_files.sort(reverse=True)
     total = len(all_files)

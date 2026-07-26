@@ -7,7 +7,5 @@ __pycache__/
 venv/
 app/uploads/*
 !app/uploads/.gitkeep
-app/uploads/images/
-uploads/
 data/
 *.log
