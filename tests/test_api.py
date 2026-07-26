@@ -272,10 +272,24 @@ class TestSecurity:
         )
         assert res.status_code == 413
 
-    def test_csp_upgrade_insecure_requests(self, client):
+    def test_csp_no_upgrade_on_plain_http(self, client):
         res = client.get("/")
-        csp = res.headers["content-security-policy"]
-        assert "upgrade-insecure-requests" in csp
+        assert "upgrade-insecure-requests" not in res.headers["content-security-policy"]
+        assert "strict-transport-security" not in res.headers
+
+    def test_csp_upgrade_when_https_base(self, client, monkeypatch):
+        monkeypatch.setattr("app.main.PUBLIC_BASE_URL", "https://img.example.com")
+        res = client.get("/")
+        assert "upgrade-insecure-requests" in res.headers["content-security-policy"]
+        assert "strict-transport-security" in res.headers
+
+    def test_upload_chunked_without_content_length_rejected(self, client):
+        res = client.post(
+            "/upload",
+            content=(chunk for chunk in [PNG_MAGIC, b"\x00" * 100]),
+            headers=auth(),
+        )
+        assert res.status_code == 411
 
     def test_verify_when_auth_token_unset(self, client, monkeypatch):
         monkeypatch.setattr("app.main.AUTH_TOKEN", None)

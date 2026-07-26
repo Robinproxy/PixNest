@@ -223,8 +223,7 @@ _CSP_POLICY = (
     "frame-ancestors 'none'; "
     "form-action 'none'; "
     "base-uri 'none'; "
-    "object-src 'none'; "
-    "upgrade-insecure-requests"
+    "object-src 'none'"
 )
 
 
@@ -250,9 +249,12 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
+    csp = _CSP_POLICY
     if PUBLIC_BASE_URL.startswith("https://") or request.url.scheme == "https":
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    response.headers["Content-Security-Policy"] = _CSP_POLICY
+        # upgrade-insecure-requests would break subresource loading on plain-HTTP deployments
+        csp += "; upgrade-insecure-requests"
+    response.headers["Content-Security-Policy"] = csp
     return response
 
 
@@ -268,6 +270,10 @@ async def limit_request_body(request: Request, call_next):
                 return JSONResponse(status_code=413, content={"detail": "Request too large"})
         except ValueError:
             return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
+    elif request.method == "POST" and request.url.path == "/upload":
+        # chunked bodies bypass the length check above and get fully spooled
+        # to temp disk during multipart parsing, before the per-file size cap
+        return JSONResponse(status_code=411, content={"detail": "Content-Length required"})
     return await call_next(request)
 
 
